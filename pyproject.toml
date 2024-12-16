@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "quantrl"
+version = "0.1.0"
+description = ""
+authors = ["quaere-verum <quaereverum2538@gmail.com>"]
+readme = "README.md"
+packages = [
+    {include="quantrl", from="src"}
+]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+polars = "^1.17.1"
+scikit-learn = "^1.6.0"
+river = "^0.22.0"
+gymnasium = "^1.0.0"
+setuptools = "^75.6.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
