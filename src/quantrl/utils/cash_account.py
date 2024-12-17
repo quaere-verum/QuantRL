@@ -6,7 +6,7 @@ class CashAccount(ABC):
     initial_capital: float
 
     def __post_init__(self) -> None:
-        self._t = 0
+        self._t: int | None = None
         self._current_capital = self.initial_capital
 
     @property
@@ -23,8 +23,8 @@ class CashAccount(ABC):
     def deposit(self, amount: float) -> None:
         pass
 
-    def reset(self) -> None:
-        self._t = 0
+    def reset(self, timestep: int | None = None) -> None:
+        self._t = timestep or 0
         self._current_capital = self.initial_capital
 
     def step(self) -> None:

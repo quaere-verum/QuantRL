@@ -22,14 +22,15 @@ portfolio_schema = {
 def get_contract_id(
     name: Literal["SPOT", "FUTURE", "OPTION"]
 ) -> int:
-    if name == "SPOT":
-        return ContractType.SPOT.value
-    elif  name == "FUTURE":
-        return ContractType.FUTURE.value
-    elif name == "OPTION":
-        return ContractType.OPTION.value
-    else:
-        raise ValueError(f"Contract name '{name}' unknown.")
+    match name:
+        case "SPOT":
+            return ContractType.SPOT.value
+        case "FUTURE":
+            return ContractType.FUTURE.value
+        case "OPTION":
+            return ContractType.OPTION.value
+        case _:
+            raise ValueError(f"Contract name '{name}' unknown.")
 
 class PortfolioBase(ABC):
     def __init__(self) -> None:
@@ -37,11 +38,16 @@ class PortfolioBase(ABC):
             schema=portfolio_schema
         )
 
+    def reset(self) -> None:
+        self.open_positions = pl.DataFrame(
+            schema=portfolio_schema
+        )        
+
     def open_position(
         self,
         symbol_id: int,
         position: float,
-        price: float,
+        entry_price: float,
         contract: Literal["SPOT", "FUTURE", "OPTION"],
         maturity: int,
     ) -> None:
@@ -50,7 +56,7 @@ class PortfolioBase(ABC):
                 {
                     "symbol_id": symbol_id,
                     "position": position,
-                    "entry_price": price,
+                    "entry_price": entry_price,
                     "contract_id": get_contract_id(contract),
                     "maturity": maturity,
                     "time_remaining": maturity
@@ -66,10 +72,12 @@ class PortfolioBase(ABC):
         self,
         prices: pl.DataFrame,
         cash_account: qrl.CashAccount,
+        *,
+        closing_mask: pl.Series | None = None,
     ) -> None:
-        closing_positions = self.open_positions.filter(self.closing_mask())
+        closing_positions = self.open_positions.filter(closing_mask or self.closing_mask)
         closing_value = value_portfolio(closing_positions, prices, contract_type=None)
-        self.open_positions = self.open_positions.filter(~self.closing_mask())
+        self.open_positions = self.open_positions.filter(~(closing_mask or self.closing_mask))
         cash_account.deposit(closing_value)
 
     @property
@@ -80,7 +88,7 @@ class PortfolioBase(ABC):
 
 def value_portfolio(
     portfolio: pl.DataFrame, 
-    prices: pl.Series,
+    prices: pl.DataFrame,
     contract_type: Literal["SPOT", "FUTURE", "OPTION"] | None = None,
 ) -> float:
     if contract_type is None:

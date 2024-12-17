@@ -22,7 +22,7 @@ class Market:
                 assert self.spot_price.schema[col].is_numeric()
 
         self.spot_price = self.spot_price.sort("date_id", "time_id", "symbol_id")
-        self._t = 0
+        self._t: int | None = None
         self._all_symbols = self.spot_price.select("symbol_id").unique()
         step = self.spot_price.select("date_id", "time_id").unique().sort("date_id", "time_id").with_row_index("timestep_id")
         self.spot_price = self.spot_price.join(
@@ -30,28 +30,33 @@ class Market:
             on=["date_id", "time_id"],
         )
 
+    def reset(self, timestep: int | None = None) -> None:
+        self._t = timestep or 0
+
     def get_data(
         self,
-        lookback_window: int = 0,
+        lags: int = 0,
         stride: int | None = None,
         symbol_id: int | np.ndarray[Any, int] | None = None,
     ) -> pl.DataFrame:
-        assert self._t - lookback_window >= 0
+        if stride is None:
+            stride = 1
+        assert self._t - stride * lags >= 0
         if symbol_id is None:
             symbol_id_ = self._all_symbols
         elif isinstance(symbol_id, int):
             symbol_id = [symbol_id]
         else:
             symbol_id_ = pl.Series(values=symbol_id.flatten())
-        if stride is None:
-            stride = 1
         data = (
             self.spot_price
             .filter(
                 pl.col("symbol_id").is_in(symbol_id_)
                 & pl.col("timestep_id").is_in(
                     list(
-                        range(self._t, self._t - lookback_window - 1, -stride)
+                        reversed(
+                            range(self._t, self._t - stride * lags - 1, -stride)
+                        )
                     )
                 )
             )
@@ -62,7 +67,7 @@ class Market:
     def get_prices(
         self,
         symbol_id: int | np.ndarray[Any, int] | None = None 
-    ) -> None:
+    ) -> pl.DataFrame:
         return self.get_data(symbol_id=symbol_id).select(["symbol_id", "price"])
 
     def step(self) -> None:
