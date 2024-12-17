@@ -1,0 +1,112 @@
+import numpy as np
+from abc import ABC, abstractmethod
+import quantrl as qrl
+import polars as pl
+from enum import Enum
+from typing import Literal
+
+class ContractType(Enum):
+    SPOT = 1
+    FUTURE = 2
+    OPTION = 3
+
+portfolio_schema = {
+    "symbol_id": pl.Int8,
+    "position": pl.Float32,
+    "entry_price": pl.Float32,
+    "contract_id": pl.Int8,
+    "maturity": pl.Int8,
+    "time_remaining": pl.Int8
+}
+
+def get_contract_id(
+    name: Literal["SPOT", "FUTURE", "OPTION"]
+) -> int:
+    if name == "SPOT":
+        return ContractType.SPOT.value
+    elif  name == "FUTURE":
+        return ContractType.FUTURE.value
+    elif name == "OPTION":
+        return ContractType.OPTION.value
+    else:
+        raise ValueError(f"Contract name '{name}' unknown.")
+
+class PortfolioBase(ABC):
+    def __init__(self) -> None:
+        self.open_positions = pl.DataFrame(
+            schema=portfolio_schema
+        )
+
+    def open_position(
+        self,
+        symbol_id: int,
+        position: float,
+        price: float,
+        contract: Literal["SPOT", "FUTURE", "OPTION"],
+        maturity: int,
+    ) -> None:
+        self.open_positions.extend(
+            pl.DataFrame(
+                {
+                    "symbol_id": symbol_id,
+                    "position": position,
+                    "entry_price": price,
+                    "contract_id": get_contract_id(contract),
+                    "maturity": maturity,
+                    "time_remaining": maturity
+                },
+                schema=portfolio_schema
+            )
+        )
+
+    def step(self) -> None:
+        self.open_positions._replace("time_remaining", self.open_positions.select("time_remaining").to_series() - 1)
+
+    def close_positions(
+        self,
+        prices: pl.DataFrame,
+        cash_account: qrl.CashAccount,
+    ) -> None:
+        closing_positions = self.open_positions.filter(self.closing_mask())
+        closing_value = value_portfolio(closing_positions, prices, contract_type=None)
+        self.open_positions = self.open_positions.filter(~self.closing_mask())
+        cash_account.deposit(closing_value)
+
+    @property
+    @abstractmethod
+    def closing_mask(self) -> pl.Series:
+        pass
+
+
+def value_portfolio(
+    portfolio: pl.DataFrame, 
+    prices: pl.Series,
+    contract_type: Literal["SPOT", "FUTURE", "OPTION"] | None = None,
+) -> float:
+    if contract_type is None:
+        contract_ids = portfolio.select("contract_id").unique()
+        return sum(
+            [
+                value_portfolio(
+                    portfolio.filter(pl.col("contract_id") == contract_id),
+                    prices,
+                    contract_type=ContractType(contract_id)
+                )
+                for contract_id in contract_ids
+            ]
+        )
+    else:
+        portfolio = portfolio.join(prices, on="symbol_id")
+        match contract_type:
+            case "SPOT":
+                return (
+                    portfolio.select("position").to_series()
+                    * portfolio.select("price").to_series()
+                ).sum()
+            case "FUTURE":
+                return (
+                    portfolio.select("position").to_series()
+                    * portfolio.select("price").to_series()
+                ).sum()
+            case "OPTION":
+                raise NotImplementedError()

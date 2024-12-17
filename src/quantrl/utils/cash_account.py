@@ -20,11 +20,14 @@ class CashAccount(ABC):
     def withdraw(self, amount: float) -> None:
         pass
 
+    def deposit(self, amount: float) -> None:
+        pass
+
     def reset(self) -> None:
         self._t = 0
         self._current_capital = self.initial_capital
 
-    def update(self) -> None:
+    def step(self) -> None:
         pass
     
 
@@ -42,8 +45,11 @@ class ConstantInflowCashAccount(CashAccount):
             raise ValueError(f"Cannot go below 0 account balance.")
         else:
             self._current_capital -= amount
-            return amount
         
-    def update(self):
+    def deposit(self, amount):
+        assert amount > 0
+        self._current_capital += amount
+        
+    def step(self):
         self._t += 1
         self._current_capital += self.next_inflow

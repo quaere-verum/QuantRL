@@ -10,6 +10,7 @@ import quantrl as qrl
 class BaseEnv(gym.Env):
     market: qrl.Market
     cash_account: qrl.CashAccount
+    portfolio: qrl.PortfolioBase
 
     def __post_init__(self) -> None:
         pass

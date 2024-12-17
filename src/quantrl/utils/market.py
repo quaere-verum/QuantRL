@@ -1,11 +1,10 @@
-from abc import ABC
 from dataclasses import dataclass
 import polars as pl
 import numpy as np
 from typing import Any
 
 @dataclass
-class Market(ABC):
+class Market:
     spot_price: pl.DataFrame
 
     def __post_init__(self) -> None:
@@ -43,7 +42,7 @@ class Market(ABC):
         elif isinstance(symbol_id, int):
             symbol_id = [symbol_id]
         else:
-            symbol_id_ = pl.Series(values=symbol_id)
+            symbol_id_ = pl.Series(values=symbol_id.flatten())
         if stride is None:
             stride = 1
         data = (
@@ -56,6 +55,7 @@ class Market(ABC):
                     )
                 )
             )
+            .sort("timestep_id", "symbol_id")
         )
         return data
     
@@ -63,4 +63,7 @@ class Market(ABC):
         self,
         symbol_id: int | np.ndarray[Any, int] | None = None 
     ) -> None:
-        return self.get_data(symbol_id=symbol_id).select("price")
+        return self.get_data(symbol_id=symbol_id).select(["symbol_id", "price"])
+
+    def step(self) -> None:
+        self._t += 1
