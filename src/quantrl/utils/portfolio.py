@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import quantrl as qrl
 import polars as pl
 from enum import Enum
-from typing import Literal
+from typing import Literal, Any, Tuple
 
 class ContractType(Enum):
     SPOT = 1
@@ -79,16 +79,22 @@ class Portfolio(ABC):
             return
         else:
             closing_positions = self.open_positions.filter(closing_mask or self.closing_mask)
-            if len(closing_positions) > 0:
-                closing_value = value_portfolio(closing_positions, market, contract_type=None)
-            else:
-                closing_value = 0
+            closing_value = value_portfolio(closing_positions, market, contract_type=None)
             self.open_positions = self.open_positions.filter(~(closing_mask or self.closing_mask))
             cash_account.deposit(closing_value)
 
     @property
     @abstractmethod
     def closing_mask(self) -> pl.Series:
+        pass
+
+    @abstractmethod
+    def summarise_positions(self, market: qrl.Market) -> np.ndarray[Any, float]:
+        pass
+
+    @property
+    @abstractmethod
+    def summary_shape(self) -> Tuple[int, ...]:
         pass
 
 
@@ -98,6 +104,8 @@ def value_portfolio(
     contract_type: Literal["SPOT", "FUTURE", "OPTION"] | None = None,
     apply_bid_ask_spread: bool = True,
 ) -> float:
+    if len(portfolio) == 0:
+        return 0
     if contract_type is None:
         contract_ids = portfolio.select("contract_id").unique()
         return sum(
@@ -132,6 +140,19 @@ def value_portfolio(
                 raise NotImplementedError()
 
 class InvestmentPortfolio(Portfolio):
+
     @property
     def closing_mask(self) -> pl.Series:
         return pl.Series(name="closing_mask", values=[False for _ in range(len(self.open_positions))])
+    
+    # TODO: add Greeks/risk metrics to position summary
+    def summarise_positions(self, market: qrl.Market):
+        return np.array(
+            [
+                value_portfolio(self.open_positions, market, None, True)
+            ]
+        )
+    
+    @property
+    def summary_shape(self) -> Tuple[int, ...]:
+        return (1,)

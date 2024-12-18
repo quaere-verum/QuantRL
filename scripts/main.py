@@ -8,6 +8,8 @@ import polars as pl
 np.random.seed(123)
 
 if __name__ == "__main__":
+    from time import time
+    start = time()
     market_data = {
         "date_id": (np.arange(100) / 20).astype(int),
         "time_id": np.arange(100) % 20,
@@ -27,6 +29,7 @@ if __name__ == "__main__":
         lags=10,
         stride=1,
         columns=["midprice"],
+        is_stationary=[False],
         lookahead_window=10,
         take_profit=0.01,
         stop_loss=-0.02
@@ -39,6 +42,10 @@ if __name__ == "__main__":
         lags=0,
         stride=1
     )
-
-    env.reset()
-    print(env.step(np.array([0])))
+    mid = time()
+    env.reset(options={"initial_timestep": 10})
+    print(predictive_model.data_train)
+    print(predictive_model.polars_to_features(market, 0))
+    print(env.state)
+    print(time() - start)
+    print(time() - mid)

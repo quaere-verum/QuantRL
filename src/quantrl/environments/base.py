@@ -5,6 +5,7 @@ import numpy as np
 from typing import Any, Dict, Iterable
 from dataclasses import dataclass
 import quantrl as qrl
+from abc import abstractmethod
 
 @dataclass
 class BaseEnv(gym.Env):
@@ -17,22 +18,49 @@ class BaseEnv(gym.Env):
 
     def __post_init__(self) -> None:
         self._t: int | None = None
-
-    @property
-    def state(self) -> Dict[str, pl.DataFrame | float]:
-        model_state = pl.DataFrame(
+        self.observation_space = gym.spaces.Dict(
             {
-                f"{symbol_id}": self.predictive_model.predict(market_data=self.market.get_data(), symbol_id=symbol_id)
-                for symbol_id in self.predictive_model.symbols
+                "market": gym.spaces.Box(0, np.inf, (self.lags + 1, len(self.market.market_data.columns))),
+                "portfolio": gym.spaces.Box(-np.inf, np.inf, self.portfolio.summary_shape),
+                "cash_account": gym.spaces.Box(-np.inf, np.inf, (1,)),
+                "predictive_model": gym.spaces.Box(-np.inf, np.inf, (len(self.predictive_model.symbols),))
             }
         )
+        self.action_space: gym.spaces.Space = None
+
+    @property
+    def state(self) -> Dict[str, np.ndarray[Any, float]]:
         return {
-            "market": self.market.get_data(self.lags, self.stride),
-            "portfolio": self.portfolio.open_positions,
-            "cash_account": self.cash_account.current_capital,
-            "predictive_model": model_state,
+            "market": self.market.get_data(self.lags, self.stride).to_numpy(),
+            "portfolio": self.portfolio.summarise_positions(market=self.market),
+            "cash_account": np.array([self.cash_account.current_capital]),
+            "predictive_model": np.array(
+                [
+                    self.predictive_model.predict(market=self.market, symbol_id=symbol_id)
+                    for symbol_id in self.predictive_model.symbols
+                ]
+            ),
         }
 
+    @property
+    @abstractmethod
+    def reward(self) -> float:
+        pass
+
+    @property
+    @abstractmethod
+    def done(self) -> bool:
+        pass
+
+    @property
+    @abstractmethod
+    def truncated(self) -> bool:
+        pass
+
+    @property
+    @abstractmethod
+    def info(self) -> Dict[str, Any]:
+        pass
 
 
     def step(self, action: np.ndarray[Any, float | int]):
@@ -54,7 +82,7 @@ class BaseEnv(gym.Env):
                 **position
             )
 
-        return self.state, 0, False, False, None
+        return self.state, self.reward, self.done, self.truncated, self.info
 
     
 
@@ -65,7 +93,7 @@ class BaseEnv(gym.Env):
         pass
 
     def reset(self, *, seed: int | None = None, options: Dict[str, Any] | None = None):
-        self._t = self.lags * self.stride
+        self._t = options["initial_timestep"]
         self.market.reset(self._t)
         self.cash_account.reset(self._t)
         self.portfolio.reset()

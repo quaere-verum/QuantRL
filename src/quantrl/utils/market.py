@@ -52,7 +52,7 @@ class Market:
         if symbol_id is None:
             symbol_id_ = self._all_symbols
         elif isinstance(symbol_id, int):
-            symbol_id = [symbol_id]
+            symbol_id_ = [symbol_id]
         else:
             symbol_id_ = pl.Series(values=symbol_id.flatten())
         data = (
