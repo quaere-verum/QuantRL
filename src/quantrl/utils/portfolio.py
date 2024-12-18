@@ -32,7 +32,7 @@ def get_contract_id(
         case _:
             raise ValueError(f"Contract name '{name}' unknown.")
 
-class PortfolioBase(ABC):
+class Portfolio(ABC):
     def __init__(self) -> None:
         self.open_positions = pl.DataFrame(
             schema=portfolio_schema

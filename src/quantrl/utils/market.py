@@ -1,31 +1,37 @@
 from dataclasses import dataclass
 import polars as pl
 import numpy as np
-from typing import Any
+from typing import Any, Literal, List
+from enum import Enum
+
+class OrderType(Enum):
+    BUY = 1
+    SELL = 2
 
 @dataclass
 class Market:
-    spot_price: pl.DataFrame
+    market_data: pl.DataFrame
+    bid_ask_spread: int
 
     def __post_init__(self) -> None:
         assert np.isin(
-            ["time_id", "symbol_id"],
-            self.spot_price.columns
+            ["date_id", "time_id", "symbol_id", "midprice"],
+            self.market_data.columns
         ).all(), (
             "spot_price dataframe must contain columns with date_id, time_id, symbol_id"
         )
-        assert self.spot_price.schema["date_id"].is_integer()
-        assert self.spot_price.schema["time_id"].is_integer()
-        assert self.spot_price.schema["symbol_id"].is_integer()
-        for col in self.spot_price.columns:
+        assert self.market_data.schema["date_id"].is_integer()
+        assert self.market_data.schema["time_id"].is_integer()
+        assert self.market_data.schema["symbol_id"].is_integer()
+        for col in self.market_data.columns:
             if col not in ["date_id", "time_id", "symbol_id"]:
-                assert self.spot_price.schema[col].is_numeric()
+                assert self.market_data.schema[col].is_numeric()
 
-        self.spot_price = self.spot_price.sort("date_id", "time_id", "symbol_id")
+        self.market_data = self.market_data.sort("date_id", "time_id", "symbol_id")
         self._t: int | None = None
-        self._all_symbols = self.spot_price.select("symbol_id").unique()
-        step = self.spot_price.select("date_id", "time_id").unique().sort("date_id", "time_id").with_row_index("timestep_id")
-        self.spot_price = self.spot_price.join(
+        self._all_symbols = self.market_data.select("symbol_id").unique()
+        step = self.market_data.select("date_id", "time_id").unique().sort("date_id", "time_id").with_row_index("timestep_id")
+        self.market_data = self.market_data.join(
             step, 
             on=["date_id", "time_id"],
         )
@@ -38,6 +44,7 @@ class Market:
         lags: int = 0,
         stride: int | None = None,
         symbol_id: int | np.ndarray[Any, int] | None = None,
+        columns: List[str] | None = None,
     ) -> pl.DataFrame:
         if stride is None:
             stride = 1
@@ -49,7 +56,7 @@ class Market:
         else:
             symbol_id_ = pl.Series(values=symbol_id.flatten())
         data = (
-            self.spot_price
+            self.market_data
             .filter(
                 pl.col("symbol_id").is_in(symbol_id_)
                 & pl.col("timestep_id").is_in(
@@ -62,13 +69,26 @@ class Market:
             )
             .sort("timestep_id", "symbol_id")
         )
-        return data
+        return data.select(pl.all() if columns is None else columns)
     
     def get_prices(
         self,
-        symbol_id: int | np.ndarray[Any, int] | None = None 
+        symbol_id: int | np.ndarray[Any, int] | None = None,
+        side: Literal["BUY", "SELL"] | None = None,
     ) -> pl.DataFrame:
-        return self.get_data(symbol_id=symbol_id).select(["symbol_id", "price"])
+        if side is not None:
+            assert side in OrderType.__members__
+        if side == "BUY":
+            sign = 1
+        elif side == "SELL":
+            sign = -1
+        else:
+            sign = 0
+        prices = (
+            self.get_data(symbol_id=symbol_id, columns=["symbol_id", "midprice"])
+            .with_columns((pl.col("midprice") + sign * self.bid_ask_spread * pl.col("midprice")).alias("price"))
+        )
+        return prices.select("symbol_id", "price")
 
     def step(self) -> None:
         self._t += 1
