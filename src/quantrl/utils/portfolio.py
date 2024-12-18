@@ -70,15 +70,21 @@ class Portfolio(ABC):
 
     def close_positions(
         self,
-        prices: pl.DataFrame,
+        market: qrl.Market,
         cash_account: qrl.CashAccount,
         *,
         closing_mask: pl.Series | None = None,
     ) -> None:
-        closing_positions = self.open_positions.filter(closing_mask or self.closing_mask)
-        closing_value = value_portfolio(closing_positions, prices, contract_type=None)
-        self.open_positions = self.open_positions.filter(~(closing_mask or self.closing_mask))
-        cash_account.deposit(closing_value)
+        if len(self.open_positions) == 0:
+            return
+        else:
+            closing_positions = self.open_positions.filter(closing_mask or self.closing_mask)
+            if len(closing_positions) > 0:
+                closing_value = value_portfolio(closing_positions, market, contract_type=None)
+            else:
+                closing_value = 0
+            self.open_positions = self.open_positions.filter(~(closing_mask or self.closing_mask))
+            cash_account.deposit(closing_value)
 
     @property
     @abstractmethod
@@ -88,8 +94,9 @@ class Portfolio(ABC):
 
 def value_portfolio(
     portfolio: pl.DataFrame, 
-    prices: pl.DataFrame,
+    market: qrl.Market,
     contract_type: Literal["SPOT", "FUTURE", "OPTION"] | None = None,
+    apply_bid_ask_spread: bool = True,
 ) -> float:
     if contract_type is None:
         contract_ids = portfolio.select("contract_id").unique()
@@ -97,14 +104,19 @@ def value_portfolio(
             [
                 value_portfolio(
                     portfolio.filter(pl.col("contract_id") == contract_id),
-                    prices,
+                    market,
                     contract_type=ContractType(contract_id)
                 )
                 for contract_id in contract_ids
             ]
         )
     else:
-        portfolio = portfolio.join(prices, on="symbol_id")
+        buy_prices = market.get_prices(side="BUY" if apply_bid_ask_spread else None).rename({"price": "buy_price"})
+        sell_prices = market.get_prices(side="SELL" if apply_bid_ask_spread else None).rename({"price": "sell_price"})
+    
+        portfolio = (
+            portfolio.join(buy_prices, on="symbol_id").join(sell_prices, on="symbol_id")
+        ).with_columns(pl.when(pl.col("position") < 0).then(pl.col("buy_price")).otherwise(pl.col("sell_price")).alias("price"))
         match contract_type:
             case "SPOT":
                 return (
@@ -118,3 +130,8 @@ def value_portfolio(
                 ).sum()
             case "OPTION":
                 raise NotImplementedError()
+
+class InvestmentPortfolio(Portfolio):
+    @property
+    def closing_mask(self) -> pl.Series:
+        return pl.Series(name="closing_mask", values=[False for _ in range(len(self.open_positions))])

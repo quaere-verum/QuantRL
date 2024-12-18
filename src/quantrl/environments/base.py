@@ -1,3 +1,4 @@
+from __future__ import annotations
 import gymnasium as gym
 import polars as pl
 import numpy as np
@@ -19,10 +20,12 @@ class BaseEnv(gym.Env):
 
     @property
     def state(self) -> Dict[str, pl.DataFrame | float]:
-        model_state = {
-            f"{symbol_id}": self.predictive_model.predict(market_data=self.market.get_data(), symbol_id=symbol_id)
-            for symbol_id in self.predictive_model.symbols
-        }
+        model_state = pl.DataFrame(
+            {
+                f"{symbol_id}": self.predictive_model.predict(market_data=self.market.get_data(), symbol_id=symbol_id)
+                for symbol_id in self.predictive_model.symbols
+            }
+        )
         return {
             "market": self.market.get_data(self.lags, self.stride),
             "portfolio": self.portfolio.open_positions,
@@ -42,7 +45,7 @@ class BaseEnv(gym.Env):
         self.portfolio.close_positions(
             self.market.get_prices(),
             self.cash_account,
-            closing_mask=self.closing_positions(action),
+            closing_mask=self.closing_positions(action=action),
         )
 
         positions_to_open = self._process_action(action, self.cash_account)
@@ -50,6 +53,8 @@ class BaseEnv(gym.Env):
             self.portfolio.open_position(
                 **position
             )
+
+        return self.state, 0, False, False, None
 
     
 

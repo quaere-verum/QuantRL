@@ -30,9 +30,9 @@ class Market:
         self.market_data = self.market_data.sort("date_id", "time_id", "symbol_id")
         self._t: int | None = None
         self._all_symbols = self.market_data.select("symbol_id").unique()
-        step = self.market_data.select("date_id", "time_id").unique().sort("date_id", "time_id").with_row_index("timestep_id")
+        timestep_id = self.market_data.select("date_id", "time_id").unique().sort("date_id", "time_id").with_row_index("timestep_id")
         self.market_data = self.market_data.join(
-            step, 
+            timestep_id, 
             on=["date_id", "time_id"],
         )
 
@@ -86,7 +86,7 @@ class Market:
             sign = 0
         prices = (
             self.get_data(symbol_id=symbol_id, columns=["symbol_id", "midprice"])
-            .with_columns((pl.col("midprice") + sign * self.bid_ask_spread * pl.col("midprice")).alias("price"))
+            .with_columns((pl.col("midprice") + (1 + sign * self.bid_ask_spread) * pl.col("midprice")).alias("price"))
         )
         return prices.select("symbol_id", "price")
 
