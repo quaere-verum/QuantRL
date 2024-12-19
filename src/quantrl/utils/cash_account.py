@@ -47,7 +47,7 @@ class ConstantInflowCashAccount(CashAccount):
             self._current_capital -= amount
         
     def deposit(self, amount):
-        assert amount > 0
+        assert amount >= 0
         self._current_capital += amount
         
     def step(self):

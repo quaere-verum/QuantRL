@@ -164,7 +164,7 @@ class TripleBarrierClassifier(PredictiveModel):
 
     @property
     def performance(self) -> float:
-        return
+        return np.nan
     
     def polars_to_features(self, market: qrl.Market, symbol_id: int) -> Dict[str, float]:
         features = dict(

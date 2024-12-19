@@ -2,7 +2,7 @@ from __future__ import annotations
 import gymnasium as gym
 import polars as pl
 import numpy as np
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, List
 from dataclasses import dataclass
 import quantrl as qrl
 from abc import abstractmethod
@@ -15,32 +15,25 @@ class BaseEnv(gym.Env):
     predictive_model: qrl.PredictiveModel
     lags: int
     stride: int
+    market_observation_columns: List[str] | None
 
     def __post_init__(self) -> None:
         self._t: int | None = None
+        if self.market_observation_columns is None:
+            self.market_observation_columns = self.market.market_data.columns
         self.observation_space = gym.spaces.Dict(
             {
-                "market": gym.spaces.Box(0, np.inf, (self.lags + 1, len(self.market.market_data.columns))),
+                "market": gym.spaces.Box(0, np.inf, (self.lags + 1, len(self.market_observation_columns))),
                 "portfolio": gym.spaces.Box(-np.inf, np.inf, self.portfolio.summary_shape),
                 "cash_account": gym.spaces.Box(-np.inf, np.inf, (1,)),
-                "predictive_model": gym.spaces.Box(-np.inf, np.inf, (len(self.predictive_model.symbols),))
+                "predictive_model": gym.spaces.Box(-np.inf, np.inf, (len(self.predictive_model.symbols) + 1,)) # Predictions + performance
             }
         )
-        self.action_space: gym.spaces.Space = None
 
     @property
+    @abstractmethod
     def state(self) -> Dict[str, np.ndarray[Any, float]]:
-        return {
-            "market": self.market.get_data(self.lags, self.stride).to_numpy(),
-            "portfolio": self.portfolio.summarise_positions(market=self.market),
-            "cash_account": np.array([self.cash_account.current_capital]),
-            "predictive_model": np.array(
-                [
-                    self.predictive_model.predict(market=self.market, symbol_id=symbol_id)
-                    for symbol_id in self.predictive_model.symbols
-                ]
-            ),
-        }
+        pass
 
     @property
     @abstractmethod
@@ -62,31 +55,14 @@ class BaseEnv(gym.Env):
     def info(self) -> Dict[str, Any]:
         pass
 
-
+    
+    @abstractmethod
     def step(self, action: np.ndarray[Any, float | int]):
-        self._t += 1
-        self.market.step()
-        self.cash_account.step()
-        self.portfolio.step()
-        self.predictive_model.step()
-
-        self.portfolio.close_positions(
-            self.market.get_prices(),
-            self.cash_account,
-            closing_mask=self.closing_positions(action=action),
-        )
-
-        positions_to_open = self._process_action(action, self.cash_account)
-        for position in positions_to_open:
-            self.portfolio.open_position(
-                **position
-            )
-
-        return self.state, self.reward, self.done, self.truncated, self.info
+        pass
 
     
 
-    def _process_action(self, action: np.ndarray[Any, float | int], cash_account: qrl.CashAccount) -> Iterable[Dict[str, float | int]]:
+    def _process_action(self, action: np.ndarray[Any, float | int]) -> Iterable[Dict[str, float | int]]:
         pass
 
     def closing_positions(self, action: np.ndarray[Any, float | int]) -> pl.Series | None:

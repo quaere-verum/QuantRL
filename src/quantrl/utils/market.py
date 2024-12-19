@@ -86,7 +86,7 @@ class Market:
             sign = 0
         prices = (
             self.get_data(symbol_id=symbol_id, columns=["symbol_id", "midprice"])
-            .with_columns((pl.col("midprice") + (1 + sign * self.bid_ask_spread) * pl.col("midprice")).alias("price"))
+            .with_columns(((1 + sign * self.bid_ask_spread) * pl.col("midprice")).alias("price"))
         )
         return prices.select("symbol_id", "price")
 
