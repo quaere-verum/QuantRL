@@ -9,6 +9,9 @@ from dataclasses import dataclass
 @dataclass
 class SingleAssetTradingEnv(qrl.BaseEnv):
     episode_length: int
+    take_profit: float
+    stop_loss: float
+    horizon: int | None
 
     def __post_init__(self):
         super().__post_init__()
@@ -111,9 +114,25 @@ class SingleAssetTradingEnv(qrl.BaseEnv):
                 "entry_price": price,
                 "strike_price": None,
                 "contract": qrl.ContractType.SPOT,
-                "maturity": None,
+                "maturity": self.horizon,
             }
         ]
 
     def closing_positions(self, action: np.ndarray[Any, float | int]) -> pl.Series | None:
-        return None
+        buy_prices = self.market.get_prices(side="BUY").rename({"price": "buy_price"})
+        sell_prices = self.market.get_prices(side="SELL").rename({"price": "sell_price"})
+    
+        portfolio = (
+            self.portfolio.open_positions.join(buy_prices, on="symbol_id").join(sell_prices, on="symbol_id")
+        ).with_columns(pl.when(pl.col("position") < 0).then(pl.col("buy_price")).otherwise(pl.col("sell_price")).alias("price"))
+        portfolio = portfolio.with_columns(
+            (
+                (pl.col("price") / pl.col("entry_price") - 1) 
+                * pl.when(pl.col("position") >= 0).then(pl.lit(1.0)).otherwise(pl.lit(-1.0))
+            ).alias("pnl")   
+        )
+        return (
+            (portfolio.select("pnl").to_series() > self.take_profit) 
+            | (portfolio.select("pnl").to_series() < self.stop_loss)
+            | (portfolio.select("time_remaining") == 0)
+        )
