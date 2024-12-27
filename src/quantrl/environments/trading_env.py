@@ -7,21 +7,19 @@ import gymnasium as gym
 from dataclasses import dataclass
 
 @dataclass
-class TradingEnv(qrl.BaseEnv):
-    action_shape: Tuple[int, ...]
-    action_size: int | None
+class SingleAssetTradingEnv(qrl.BaseEnv):
     episode_length: int
 
     def __post_init__(self):
         super().__post_init__()
+        assert self.predictive_model.symbols.size == 1
+        symbol_id = self.market.market_data.select("symbol_id").unique().to_numpy()
+        assert symbol_id.size == 1
+        self._symbol_id = symbol_id.item()
         self._step: int | None = None
         self._previous_portfolio_value: float | None = None
         self._current_portfolio_value: float | None = None
-        if self.action_size is not None:
-            assert len(self.action_shape) == 1
-            self.action_space = gym.spaces.Discrete(self.action_size)
-        else:
-            self.action_space = gym.spaces.Box(-np.inf, np.inf, self.action_shape)
+        self.action_space = gym.spaces.Box(-1, 1, (1,))
 
     def reset(self, *, seed = None, options = None):
         super().reset(seed=seed, options=options)
@@ -45,6 +43,8 @@ class TradingEnv(qrl.BaseEnv):
         positions_to_open = self._process_action(action)
         for position in positions_to_open:
             self.portfolio.open_position(
+                cash_account=self.cash_account,
+                market=self.market,
                 **position
             )
         self._previous_portfolio_value = self._current_portfolio_value
@@ -73,7 +73,7 @@ class TradingEnv(qrl.BaseEnv):
 
     @property
     def reward(self) -> float:
-        return self._current_portfolio_value - self._previous_portfolio_value
+        return np.log(self._current_portfolio_value / self._previous_portfolio_value)
 
     @property
     def done(self) -> bool:
@@ -98,15 +98,19 @@ class TradingEnv(qrl.BaseEnv):
     
 
     def _process_action(self, action: np.ndarray[Any, float | int]) -> Iterable[Dict[str, float | int]]:
-        buy_prices = self.market.get_prices(side="BUY").to_dict()
-        sell_prices = self.market.get_prices(side="SELL").to_dict()
+        if action.item() >= 0:
+            price = self.market.get_prices(side="BUY").to_dict()["price"]
+        else:
+            price = self.market.get_prices(side="SELL").to_dict()["price"]
+        investment = action.item() * self.cash_account.current_capital
+        self.cash_account.withdraw(investment)
         return [
                 {
-                "symbol_id": 0,
-                "position": action.item(),
-                "entry_price": buy_prices["price"].item() if action >= 0 else sell_prices["price"].item(),
+                "symbol_id": self._symbol_id,
+                "position": investment / price,
+                "entry_price": price,
                 "strike_price": None,
-                "contract": "SPOT",
+                "contract": qrl.ContractType.SPOT,
                 "maturity": None,
             }
         ]

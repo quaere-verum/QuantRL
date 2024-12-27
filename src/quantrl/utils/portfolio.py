@@ -25,11 +25,11 @@ def get_contract_id(
     name: Literal["SPOT", "FUTURE", "OPTION"]
 ) -> int:
     match name:
-        case "SPOT":
+        case ContractType.SPOT:
             return ContractType.SPOT.value
-        case "FUTURE":
+        case ContractType.FUTURE:
             return ContractType.FUTURE.value
-        case "OPTION":
+        case ContractType.OPTION:
             return ContractType.OPTION.value
         case _:
             raise ValueError(f"Contract name '{name}' unknown.")
@@ -47,13 +47,19 @@ class Portfolio(ABC):
 
     def open_position(
         self,
+        cash_account: qrl.CashAccount,
+        market: qrl.Market,
+        *,
         symbol_id: int,
         position: float,
         entry_price: float,
-        strike_price: float,
+        strike_price: float | None,
         contract: Literal["SPOT", "FUTURE", "OPTION"],
-        maturity: int,
+        maturity: int | None,
     ) -> None:
+        contract_id = get_contract_id(contract)
+        if contract in ["FUTURE", "OPTION"]:
+            assert strike_price is not None and maturity is not None
         self.open_positions.extend(
             pl.DataFrame(
                 {
@@ -61,9 +67,9 @@ class Portfolio(ABC):
                     "position": position,
                     "entry_price": entry_price,
                     "strike_price": strike_price,
-                    "contract_id": get_contract_id(contract),
+                    "contract_id": contract_id,
                     "maturity": maturity,
-                    "time_remaining": maturity
+                    "time_remaining": maturity,
                 },
                 schema=portfolio_schema
             )
@@ -82,9 +88,10 @@ class Portfolio(ABC):
         if len(self.open_positions) == 0:
             return
         else:
-            closing_positions = self.open_positions.filter(closing_mask or self.closing_mask(market))
+            closing_mask = closing_mask or self.closing_mask(market)
+            closing_positions = self.open_positions.filter(closing_mask)
             closing_value = value_portfolio(closing_positions, market, contract_type=None)
-            self.open_positions = self.open_positions.filter(~(closing_mask or self.closing_mask(market)))
+            self.open_positions = self.open_positions.filter(~closing_mask)
             cash_account.deposit(closing_value)
 
     @abstractmethod
@@ -170,16 +177,16 @@ class TripleBarrierPortfolio(Portfolio):
         ).with_columns(pl.when(pl.col("position") < 0).then(pl.col("buy_price")).otherwise(pl.col("sell_price")).alias("price"))
         portfolio = portfolio.with_columns(
             pl.when(
-                pl.col("contract_id") == get_contract_id("SPOT")
+                pl.col("contract_id") == get_contract_id(ContractType.SPOT)
             ).then(
                 (pl.col("price") / pl.col("entry_price") - 1) 
                 * pl.when(pl.col("position") >= 0).then(pl.lit(1.0)).otherwise(pl.lit(-1.0))
             ).when(
-                pl.col("contract_id") == get_contract_id("FUTURE")
+                pl.col("contract_id") == get_contract_id(ContractType.FUTURE)
             ).then(
                 None
             ).when(
-                pl.col("contract_id") == get_contract_id("OPTION")
+                pl.col("contract_id") == get_contract_id(ContractType.OPTION)
             ).then(
                 None
             ).alias("pnl")

@@ -17,11 +17,15 @@ class CashAccount(ABC):
     def current_capital(self) -> float:
         return self._current_capital
 
-    def withdraw(self, amount: float) -> None:
-        pass
-
-    def deposit(self, amount: float) -> None:
-        pass
+    def withdraw(self, amount):
+        if amount > self.current_capital:
+            raise ValueError(f"Cannot go below 0 account balance.")
+        else:
+            self._current_capital -= amount
+        
+    def deposit(self, amount):
+        assert amount >= 0
+        self._current_capital += amount
 
     def reset(self, timestep: int | None = None) -> None:
         self._t = timestep or 0
@@ -39,16 +43,6 @@ class ConstantInflowCashAccount(CashAccount):
     @property
     def next_inflow(self) -> float:
         return self.inflow_amount if self._t % self.inflow_interval == 0 else 0
-    
-    def withdraw(self, amount):
-        if amount > self.current_capital:
-            raise ValueError(f"Cannot go below 0 account balance.")
-        else:
-            self._current_capital -= amount
-        
-    def deposit(self, amount):
-        assert amount >= 0
-        self._current_capital += amount
         
     def step(self):
         self._t += 1

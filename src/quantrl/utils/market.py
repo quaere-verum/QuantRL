@@ -15,29 +15,36 @@ class Market:
 
     def __post_init__(self) -> None:
         assert np.isin(
-            ["date_id", "time_id", "symbol_id", "midprice"],
+            ["timestep_id", "date_id", "time_id", "symbol_id", "midprice"],
             self.market_data.columns
         ).all(), (
-            "spot_price dataframe must contain columns with date_id, time_id, symbol_id"
+            "spot_price dataframe must contain columns with timestep_id, date_id, time_id, symbol_id"
         )
+        timestep_id = self.market_data.select("timestep_id").unique().to_numpy().flatten()
+        timestep_id.sort()
+        assert timestep_id.min() == 0, "timestep_id should start at 0."
+        assert np.all(np.diff(timestep_id) == 1), "timestep_id should contain consecutive integer values."
+        assert self.market_data.schema["timestep_id"].is_integer()
         assert self.market_data.schema["date_id"].is_integer()
         assert self.market_data.schema["time_id"].is_integer()
         assert self.market_data.schema["symbol_id"].is_integer()
         for col in self.market_data.columns:
-            if col not in ["date_id", "time_id", "symbol_id"]:
+            if col not in ["timestep_id", "date_id", "time_id", "symbol_id"]:
                 assert self.market_data.schema[col].is_numeric()
 
-        self.market_data = self.market_data.sort("date_id", "time_id", "symbol_id")
-        self._t: int | None = None
-        self._all_symbols = self.market_data.select("symbol_id").unique()
-        timestep_id = self.market_data.select("date_id", "time_id").unique().sort("date_id", "time_id").with_row_index("timestep_id")
+        market_id = self.market_data.select("date_id", "time_id").unique().sort("date_id", "time_id").with_row_index("market_id")
         self.market_data = self.market_data.join(
-            timestep_id, 
+            market_id, 
             on=["date_id", "time_id"],
         )
+        self.market_data = self.market_data.sort("market_id", "symbol_id")
+        self._t: int | None = None
+        self._market_id: int | None = None
+        self._all_symbols = self.market_data.select("symbol_id").unique().to_numpy()
 
-    def reset(self, timestep: int | None = None) -> None:
-        self._t = timestep or 0
+    def reset(self, timestep: int) -> None:
+        self._t = timestep
+        self._market_id = int(self.market_data.filter(pl.col("timestep_id") == self._t).select("market_id").max().item())
 
     def get_data(
         self,
@@ -48,21 +55,21 @@ class Market:
     ) -> pl.DataFrame:
         if stride is None:
             stride = 1
-        assert self._t - stride * lags >= 0
+        assert self._market_id - stride * lags >= 0
         if symbol_id is None:
-            symbol_id_ = self._all_symbols
+            symbol_id = pl.Series(self._all_symbols)
         elif isinstance(symbol_id, int):
-            symbol_id_ = [symbol_id]
+            symbol_id = [symbol_id]
         else:
-            symbol_id_ = pl.Series(values=symbol_id.flatten())
+            symbol_id = pl.Series(values=symbol_id.flatten())
         data = (
             self.market_data
             .filter(
-                pl.col("symbol_id").is_in(symbol_id_)
-                & pl.col("timestep_id").is_in(
+                pl.col("symbol_id").is_in(symbol_id)
+                & pl.col("market_id").is_in(
                     list(
                         reversed(
-                            range(self._t, self._t - stride * lags - 1, -stride)
+                            range(self._market_id, self._market_id - stride * lags - 1, -stride)
                         )
                     )
                 )
@@ -92,3 +99,4 @@ class Market:
 
     def step(self) -> None:
         self._t += 1
+        self._market_id = int(self.market_data.filter(pl.col("timestep_id") == self._t).select("market_id").max().item())
