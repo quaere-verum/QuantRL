@@ -102,9 +102,9 @@ class SingleAssetTradingEnv(qrl.BaseEnv):
 
     def _process_action(self, action: np.ndarray[Any, float | int]) -> Iterable[Dict[str, float | int]]:
         if action.item() >= 0:
-            price = self.market.get_prices(side="BUY").to_dict()["price"]
+            price = self.market.get_prices(side=qrl.OrderType.BUY).to_dict()["price"]
         else:
-            price = self.market.get_prices(side="SELL").to_dict()["price"]
+            price = self.market.get_prices(side=qrl.OrderType.SELL).to_dict()["price"]
         investment = action.item() * self.cash_account.current_capital
         self.cash_account.withdraw(investment)
         return [
@@ -119,8 +119,8 @@ class SingleAssetTradingEnv(qrl.BaseEnv):
         ]
 
     def closing_positions(self, action: np.ndarray[Any, float | int]) -> pl.Series | None:
-        buy_prices = self.market.get_prices(side="BUY").rename({"price": "buy_price"})
-        sell_prices = self.market.get_prices(side="SELL").rename({"price": "sell_price"})
+        buy_prices = self.market.get_prices(side=qrl.OrderType.BUY).rename({"price": "buy_price"})
+        sell_prices = self.market.get_prices(side=qrl.OrderType.SELL).rename({"price": "sell_price"})
     
         portfolio = (
             self.portfolio.open_positions.join(buy_prices, on="symbol_id").join(sell_prices, on="symbol_id")
