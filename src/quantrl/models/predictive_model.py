@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from river.drift.retrain import DriftRetrainingClassifier
+from river.base import Classifier, Regressor
 from typing import Dict, List, Any
 from abc import abstractmethod
 import polars as pl
@@ -9,9 +9,9 @@ import copy as cp
 
 @dataclass
 class PredictiveModel:
-    classifier: DriftRetrainingClassifier
+    model: Classifier | Regressor
     """
-    Classifier used to generate signals.
+    Model used to generate signals.
     """
     market: qrl.Market
     """
@@ -29,7 +29,7 @@ class PredictiveModel:
     @abstractmethod
     def prepare_training_data(self, market: qrl.Market) -> pl.DataFrame:
         """
-        Prepares the training data that is used to update the classifier at each timestep.
+        Prepares the training data that is used to update the model at each timestep.
         Take care to not introduce data leakage!
 
         Parameters
@@ -45,6 +45,7 @@ class PredictiveModel:
         pass
 
     def __post_init__(self) -> None:
+        assert isinstance(self.model, (Classifier, Regressor))
         assert self.labels.min() == 0
         self.labels.sort()
         assert np.all(np.diff(self.labels) == 1)
@@ -60,13 +61,13 @@ class PredictiveModel:
         self.symbols = symbols
         if not self.share_model:
             self._model = {
-                int(symbol_id): cp.deepcopy(self.classifier)
+                int(symbol_id): cp.deepcopy(self.model)
                 for symbol_id in symbols
             }
         else:
-            cf = cp.deepcopy(self.classifier)
+            model = cp.deepcopy(self.model)
             self._model = {
-                int(symbol_id): cf
+                int(symbol_id): model
                 for symbol_id in symbols
             }
         self.features = [col for col in self.data_train.columns if col not in ["timestep_id", "symbol_id", "label"]]
@@ -74,30 +75,30 @@ class PredictiveModel:
     
     def reset(self, timestep: int | None = None) -> None:
         """
-        Reset the classifier, to be used when resetting the reinforcement learning environment.
+        Reset the model, to be used when resetting the reinforcement learning environment.
 
         Parameters
         ----------
         timestep : int
-            Initialise the classifier to start at the provided timestep. E.g. if the inputs contain n lagged values
+            Initialise the model to start at the provided timestep. E.g. if the inputs contain n lagged values
             from historical data, then timestep = n will be necessary.
         """
         self._t = timestep or 0
         if not self.share_model:
             self._model = {
-                int(symbol_id): cp.deepcopy(self.classifier)
+                int(symbol_id): cp.deepcopy(self.model)
                 for symbol_id in self.symbols
             }
         else:
-            cf = cp.deepcopy(self.classifier)
+            model = cp.deepcopy(self.model)
             self._model = {
-                int(symbol_id): cf
+                int(symbol_id): model
                 for symbol_id in self.symbols
             }
 
     def step(self) -> None:
         """
-        Evolve the classifier by one timestep to include new data, to be used when the reinforcement learning environment takes a step.
+        Evolve the model by one timestep to include new data, to be used when the reinforcement learning environment takes a step.
         """
         self._t += 1
         data_train = self.data_train.filter(pl.col("timestep_id") == self._t)
@@ -122,22 +123,25 @@ class PredictiveModel:
         symbol_id : int
             symbol_id for which the prediction is made.
         return_distribution : bool
-            If True, returns the probability distribution instead of the predicted label.
+            If True, returns the probability distribution instead of the predicted label, if the model is a classifier.
 
         Returns
         -------
         int
-            The predicted label, or the estimated probability distribution.
+            The predicted value, or the estimated probability distribution.
         """
         X = self.market_to_features(market=market, symbol_id=symbol_id)
-        proba = self._model[symbol_id].predict_proba_one(X)
-        distribution = np.zeros_like(self.labels, dtype=float)
-        for key, value in proba.items():
-            distribution[key] = value
-        if return_distribution:
-            return distribution / distribution.sum()
+        if isinstance(self._model[symbol_id], Regressor):
+            return self._model[symbol_id].predict_one(X)
         else:
-            return distribution.argmax().item()
+            proba = self._model[symbol_id].predict_proba_one(X)
+            distribution = np.zeros_like(self.labels, dtype=float)
+            for key, value in proba.items():
+                distribution[key] = value
+            if return_distribution:
+                return distribution / distribution.sum()
+            else:
+                return distribution.argmax().item()
     
     @property
     @abstractmethod
@@ -206,46 +210,49 @@ class TripleBarrierClassifier(PredictiveModel):
 
 
     def prepare_training_data(self, market: qrl.Market) -> pl.DataFrame:
-        data = (
-            market.market_data.select("timestep_id", "symbol_id", "midprice")
-            .with_columns(
-                [
-                    (
-                        pl.col("midprice").shift(-k)
-                        .over("symbol_id", order_by="timestep_id").alias(f"midprice_{k}")
-                    )
-                    for k in range(1, self.lookahead_window + 1)
-                ]
-            )
-        ).drop("timestep_id", "symbol_id").to_numpy()
+        # TODO: Make sure that each training item is assigned the correct timestep_id
+        # market_data = market.get_all_data()
+        # data = (
+        #     market_data.select("timestep_id", "market_id", "symbol_id", "midprice")
+        #     .with_columns(
+        #         [
+        #             (
+        #                 pl.col("midprice").shift(-k)
+        #                 .over("symbol_id", order_by="market_id").alias(f"midprice_{k}")
+        #             )
+        #             for k in range(1, self.lookahead_window + 1)
+        #         ]
+        #     )
+        # ).drop("timestep_id", "market_id", "symbol_id").to_numpy()
 
-        label = self._triple_barrier_label(data)
-        features = (
-            self.market.market_data.select(
-                ["timestep_id", "symbol_id"] + self.columns
-            )
-        )
-        divisor = features.select(self.columns).clone()
-        for col, stationary in zip(self.columns, self.is_stationary):
-            if stationary:
-                divisor._replace(col, pl.Series(col, np.ones(len(divisor))))
-        for shift in range(self.stride, self.stride * self.lags + 1, self.stride):
-            shifted_features = (
-                (features.select(self.columns).shift(-shift) / divisor)
-                .with_columns(
-                    features.select("timestep_id").to_series(),
-                    features.select("symbol_id").to_series(),
-                )
-            ).rename(dict(zip(self.columns, [f"{col}_{shift}" for col in self.columns])))
-            features = features.join(
-                shifted_features,
-                on=["timestep_id", "symbol_id"]
-            )
-        for col, stationary in zip(self.columns, self.is_stationary):
-            if not stationary:
-                features = features.drop(col)
-        data_train = features.with_columns(pl.Series(name="label", values=label))
-        return data_train.drop_nulls().drop_nans()
+        # label = self._triple_barrier_label(data)
+        # features = (
+        #     market_data.select(
+        #         ["timestep_id", "market_id", "symbol_id"] + self.columns
+        #     )
+        # )
+        # divisor = features.select(self.columns).clone()
+        # for col, stationary in zip(self.columns, self.is_stationary):
+        #     if stationary:
+        #         divisor._replace(col, pl.Series(col, np.ones(len(divisor))))
+        # for shift in range(self.stride, self.stride * self.lags + 1, self.stride):
+        #     shifted_features = (
+        #         (features.select(self.columns).shift(-shift) / divisor)
+        #         .with_columns(
+        #             features.select("market_id").to_series(),
+        #             features.select("symbol_id").to_series(),
+        #         )
+        #     ).rename(dict(zip(self.columns, [f"{col}_{shift}" for col in self.columns])))
+        #     features = features.join(
+        #         shifted_features,
+        #         on=["market_id", "symbol_id"]
+        #     )
+        # for col, stationary in zip(self.columns, self.is_stationary):
+        #     if not stationary:
+        #         features = features.drop(col)
+        # data_train = features.with_columns(pl.Series(name="label", values=label))
+        # return data_train.drop_nulls().drop_nans()
+        raise NotImplementedError()
 
     @property
     def performance(self) -> float:
@@ -255,7 +262,7 @@ class TripleBarrierClassifier(PredictiveModel):
         features = dict(
             zip(
                 self.feature_names, 
-                market.get_data(
+                market.get_current_data(
                     self.lags, 
                     self.stride, 
                     symbol_id=symbol_id, 

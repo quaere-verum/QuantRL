@@ -16,7 +16,7 @@ class SingleAssetTradingEnv(qrl.BaseEnv):
     def __post_init__(self):
         super().__post_init__()
         assert self.predictive_model.symbols.size == 1
-        symbol_id = self.market.market_data.select("symbol_id").unique().to_numpy()
+        symbol_id = self.market.get_all_data().select("symbol_id").unique().to_numpy()
         assert symbol_id.size == 1
         self._symbol_id = symbol_id.item()
         self._step: int | None = None
@@ -47,15 +47,14 @@ class SingleAssetTradingEnv(qrl.BaseEnv):
         for position in positions_to_open:
             self.portfolio.open_position(
                 cash_account=self.cash_account,
-                market=self.market,
-                **position
+                position=position,
             )
         self._previous_portfolio_value = self._current_portfolio_value
         self._current_portfolio_value = qrl.value_portfolio(
-            self.portfolio.open_positions,
-            self.market,
-            None,
-            True,
+            portfolio=self.portfolio.open_positions,
+            market=self.market,
+            contract_type=None,
+            apply_bid_ask_spread=True,
         ) + self.cash_account.current_capital
 
         return self.state, self.reward, self.done, self.truncated, self.info
@@ -63,7 +62,7 @@ class SingleAssetTradingEnv(qrl.BaseEnv):
     @property
     def state(self) -> Dict[str, np.ndarray[Any, float]]:
         return {
-            "market": self.market.get_data(self.lags, self.stride, columns=self.market_observation_columns).to_numpy(),
+            "market": self.market.get_current_data(self.lags, self.stride, columns=self.market_observation_columns).to_numpy(),
             "portfolio": self.portfolio.summarise_positions(self.market),
             "cash_account": np.array([self.cash_account.current_capital]),
             "predictive_model": np.array(
@@ -82,8 +81,7 @@ class SingleAssetTradingEnv(qrl.BaseEnv):
     def done(self) -> bool:
         return (
             True 
-            if qrl.value_portfolio(self.portfolio.open_positions, self.market, None, True)
-            + self.cash_account.current_capital < 0
+            if self._current_portfolio_value <= 0
             else False
         )
 

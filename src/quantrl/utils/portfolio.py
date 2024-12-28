@@ -28,21 +28,8 @@ class PositionData:
     position: float
     entry_price: float
     strike_price: float | None
-    contract_type: Literal["SPOT", "FUTURE", "OPTION"]
+    contract_type: ContractType
     maturity: int | None
-
-def get_contract_id(
-    name: Literal["SPOT", "FUTURE", "OPTION"]
-) -> int:
-    match name:
-        case "SPOT":
-            return ContractType.SPOT.value
-        case "FUTURE":
-            return ContractType.FUTURE.value
-        case "OPTION":
-            return ContractType.OPTION.value
-        case _:
-            raise ValueError(f"Contract name '{name}' unknown.")
 
 class Portfolio(ABC):
     def __init__(self) -> None:
@@ -73,8 +60,7 @@ class Portfolio(ABC):
         position : PositionData
             Dataclass which contains the information required to open the position.
         """
-        contract_id = get_contract_id(position.contract_type)
-        if position.contract_type in ["FUTURE", "OPTION"]:
+        if position.contract_type in [ContractType.FUTURE, ContractType.OPTION]:
             assert position.strike_price is not None and position.maturity is not None
         self.open_positions.extend(
             pl.DataFrame(
@@ -83,7 +69,7 @@ class Portfolio(ABC):
                     "position": position.position,
                     "entry_price": position.entry_price,
                     "strike_price": position.strike_price,
-                    "contract_id": contract_id,
+                    "contract_id": position.contract_type.value,
                     "maturity": position.maturity,
                     "time_remaining": position.maturity,
                 },
@@ -178,7 +164,7 @@ class Portfolio(ABC):
 def value_portfolio(
     portfolio: pl.DataFrame, 
     market: qrl.Market,
-    contract_type: Literal["SPOT", "FUTURE", "OPTION"] | None = None,
+    contract_type: ContractType | None = None,
     apply_bid_ask_spread: bool = True,
 ) -> float:
     """
@@ -215,22 +201,22 @@ def value_portfolio(
             ]
         )
     else:
-        buy_prices = market.get_prices(side="BUY" if apply_bid_ask_spread else None).rename({"price": "buy_price"})
-        sell_prices = market.get_prices(side="SELL" if apply_bid_ask_spread else None).rename({"price": "sell_price"})
+        buy_prices = market.get_prices(side=qrl.OrderType.BUY if apply_bid_ask_spread else None).rename({"price": "buy_price"})
+        sell_prices = market.get_prices(side=qrl.OrderType.SELL if apply_bid_ask_spread else None).rename({"price": "sell_price"})
     
         portfolio = (
             portfolio.join(buy_prices, on="symbol_id").join(sell_prices, on="symbol_id")
         ).with_columns(pl.when(pl.col("position") < 0).then(pl.col("buy_price")).otherwise(pl.col("sell_price")).alias("price"))
         match contract_type:
-            case "SPOT":
+            case ContractType.SPOT:
                 return (
                     portfolio.select("position").to_series()
                     * portfolio.select("price").to_series()
                 ).sum()
-            case "FUTURE":
+            case ContractType.FUTURE:
                 # TODO: Implement valuation for futures contract
                 raise NotImplementedError()
-            case "OPTION":
+            case ContractType.OPTION:
                 # TODO: Implement valuation for options contract
                 raise NotImplementedError()
 
@@ -255,24 +241,24 @@ class TripleBarrierPortfolio(Portfolio):
         pass
 
     def closing_mask(self, market: qrl.Market) -> pl.Series:
-        buy_prices = market.get_prices(side="BUY").rename({"price": "buy_price"})
-        sell_prices = market.get_prices(side="SELL").rename({"price": "sell_price"})
+        buy_prices = market.get_prices(side=qrl.OrderType.BUY).rename({"price": "buy_price"})
+        sell_prices = market.get_prices(side=qrl.OrderType.SELL).rename({"price": "sell_price"})
     
         portfolio = (
             self.open_positions.join(buy_prices, on="symbol_id").join(sell_prices, on="symbol_id")
         ).with_columns(pl.when(pl.col("position") < 0).then(pl.col("buy_price")).otherwise(pl.col("sell_price")).alias("price"))
         portfolio = portfolio.with_columns(
             pl.when(
-                pl.col("contract_id") == get_contract_id("SPOT")
+                pl.col("contract_id") == ContractType.SPOT.value
             ).then(
                 (pl.col("price") / pl.col("entry_price") - 1) 
                 * pl.when(pl.col("position") >= 0).then(pl.lit(1.0)).otherwise(pl.lit(-1.0))
             ).when(
-                pl.col("contract_id") == get_contract_id("FUTURE")
+                pl.col("contract_id") == ContractType.FUTURE.value
             ).then(
                 None
             ).when(
-                pl.col("contract_id") == get_contract_id("OPTION")
+                pl.col("contract_id") == ContractType.OPTION.value
             ).then(
                 None
             ).alias("pnl")
