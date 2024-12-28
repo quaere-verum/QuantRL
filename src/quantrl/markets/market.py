@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from abc import ABC, abstractmethod
 import polars as pl
 import numpy as np
 from typing import Any, Literal, List
@@ -9,11 +10,95 @@ class OrderType(Enum):
     SELL = 2
 
 @dataclass
-class Market:
-    market_data: pl.DataFrame
+class Market(ABC):
     bid_ask_spread: int
+    """
+    The market's bid ask spread in basis points.
+    """
+
+    def __post_init__(self):
+        self._t: int | None = None
+        self._market_id: int | None = None
+
+    @abstractmethod
+    def reset(self, timestep: int) -> None:
+        """
+        Reset the market, to be used when resetting the reinforcement learning environment.
+
+        Parameters
+        ----------
+        timestep : int
+            Initialise the market to start at the provided timestep. E.g. if the observations contain n lagged values
+            from historical data, then timestep = n will be necessary.
+        """
+        pass
+
+    @abstractmethod
+    def step(self) -> None:
+        """
+        Evolve the market by one timestep, to be used when the reinforcement learning environment takes a step.
+        """
+        pass
+
+    @abstractmethod
+    def get_data(
+        self,
+        lags: int = 0,
+        stride: int | None = None,
+        symbol_id: int | np.ndarray[Any, int] | None = None,
+        columns: List[str] | None = None,
+    ) -> pl.DataFrame:
+        """
+        Return the market data for the current timestep.
+
+        Parameters
+        ----------
+        lags : int, optional
+            How many lagged historical values to include, by default 0
+        stride : int | None, optional
+            Number of timesteps between lagged values, by default None
+        symbol_id : int | np.ndarray[Any, int] | None, optional
+            Which symbol_ids to retrieve the data for, by default None. If None, returns the market data for all symbols.
+        columns : List[str] | None, optional
+            Which columns to retrieve, by default None. If None, returns all columns.
+
+        Returns
+        -------
+        pl.DataFrame
+            The market data for the current timestep
+        """
+        pass
+
+    @abstractmethod
+    def get_prices(
+        self,
+        symbol_id: int | np.ndarray[Any, int] | None = None,
+        side: Literal["BUY", "SELL"] | None = None,
+    ) -> pl.DataFrame:
+        """
+        Get the current market prices for the specified symbol_ids.
+
+        Parameters
+        ----------
+        symbol_id : int | np.ndarray[Any, int] | None, optional
+            Which symbols to retrieve the prices for, by default None. If None, returns the prices for all symbols.
+        side : Literal[&quot;BUY&quot;, &quot;SELL&quot;] | None, optional
+            Which side to retrieve the prices for, by default None. If None, no bid-ask spread is applied.
+
+        Returns
+        -------
+        pl.DataFrame
+            The requested prices.
+        """
+        pass
+
+
+@dataclass
+class HistoricalMarket(Market):
+    market_data: pl.DataFrame
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         assert np.isin(
             ["timestep_id", "date_id", "time_id", "symbol_id", "midprice"],
             self.market_data.columns
@@ -38,8 +123,6 @@ class Market:
             on=["date_id", "time_id"],
         )
         self.market_data = self.market_data.sort("market_id", "symbol_id")
-        self._t: int | None = None
-        self._market_id: int | None = None
         self._all_symbols = self.market_data.select("symbol_id").unique().to_numpy()
 
     def reset(self, timestep: int) -> None:
@@ -78,11 +161,7 @@ class Market:
         )
         return data.select(pl.all() if columns is None else columns)
     
-    def get_prices(
-        self,
-        symbol_id: int | np.ndarray[Any, int] | None = None,
-        side: Literal["BUY", "SELL"] | None = None,
-    ) -> pl.DataFrame:
+    def get_prices(self, symbol_id = None, side = None):
         if side is not None:
             assert side in OrderType.__members__
         if side == "BUY":
@@ -93,7 +172,7 @@ class Market:
             sign = 0
         prices = (
             self.get_data(symbol_id=symbol_id, columns=["symbol_id", "midprice"])
-            .with_columns(((1 + sign * self.bid_ask_spread) * pl.col("midprice")).alias("price"))
+            .with_columns(((1 + sign * self.bid_ask_spread * 1e-4) * pl.col("midprice")).alias("price"))
         )
         return prices.select("symbol_id", "price")
 

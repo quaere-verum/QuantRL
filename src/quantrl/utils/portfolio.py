@@ -1,6 +1,7 @@
 from __future__ import annotations
 import numpy as np
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import quantrl as qrl
 import polars as pl
 from enum import Enum
@@ -21,15 +22,24 @@ portfolio_schema = {
     "time_remaining": pl.Int8
 }
 
+@dataclass
+class PositionData:
+    symbol_id: int
+    position: float
+    entry_price: float
+    strike_price: float | None
+    contract_type: Literal["SPOT", "FUTURE", "OPTION"]
+    maturity: int | None
+
 def get_contract_id(
     name: Literal["SPOT", "FUTURE", "OPTION"]
 ) -> int:
     match name:
-        case ContractType.SPOT:
+        case "SPOT":
             return ContractType.SPOT.value
-        case ContractType.FUTURE:
+        case "FUTURE":
             return ContractType.FUTURE.value
-        case ContractType.OPTION:
+        case "OPTION":
             return ContractType.OPTION.value
         case _:
             raise ValueError(f"Contract name '{name}' unknown.")
@@ -41,6 +51,9 @@ class Portfolio(ABC):
         )
 
     def reset(self) -> None:
+        """
+        Reset the portfolio, to be used when resetting the reinforcement learning environment.
+        """
         self.open_positions = pl.DataFrame(
             schema=portfolio_schema
         )        
@@ -48,34 +61,40 @@ class Portfolio(ABC):
     def open_position(
         self,
         cash_account: qrl.CashAccount,
-        market: qrl.Market,
-        *,
-        symbol_id: int,
-        position: float,
-        entry_price: float,
-        strike_price: float | None,
-        contract: Literal["SPOT", "FUTURE", "OPTION"],
-        maturity: int | None,
+        position: PositionData,
     ) -> None:
-        contract_id = get_contract_id(contract)
-        if contract in ["FUTURE", "OPTION"]:
-            assert strike_price is not None and maturity is not None
+        """
+        Opens the specified position, if possible.
+
+        Parameters
+        ----------
+        cash_account : qrl.CashAccount
+            Cash account which manages the funding.
+        position : PositionData
+            Dataclass which contains the information required to open the position.
+        """
+        contract_id = get_contract_id(position.contract_type)
+        if position.contract_type in ["FUTURE", "OPTION"]:
+            assert position.strike_price is not None and position.maturity is not None
         self.open_positions.extend(
             pl.DataFrame(
                 {
-                    "symbol_id": symbol_id,
-                    "position": position,
-                    "entry_price": entry_price,
-                    "strike_price": strike_price,
+                    "symbol_id": position.symbol_id,
+                    "position": position.position,
+                    "entry_price": position.entry_price,
+                    "strike_price": position.strike_price,
                     "contract_id": contract_id,
-                    "maturity": maturity,
-                    "time_remaining": maturity,
+                    "maturity": position.maturity,
+                    "time_remaining": position.maturity,
                 },
                 schema=portfolio_schema
             )
         )
 
     def step(self) -> None:
+        """
+        Evolve the portfolio by one timestep, to be used when the reinforcement learning environment takes a step.
+        """
         self.open_positions._replace("time_remaining", self.open_positions.select("time_remaining").to_series() - 1)
 
     def close_positions(
@@ -85,6 +104,18 @@ class Portfolio(ABC):
         *,
         closing_mask: pl.Series | None = None,
     ) -> None:
+        """
+        Close the specified positions.
+
+        Parameters
+        ----------
+        market : qrl.Market
+            Market object that can be used to derive closing criteria.
+        cash_account : qrl.CashAccount
+            Cash account which manages funding.
+        closing_mask : pl.Series | None, optional
+            Boolean mask that specifies which positions to close, by default None. If None, use self.closing_positions.
+        """
         if len(self.open_positions) == 0:
             return
         else:
@@ -96,15 +127,51 @@ class Portfolio(ABC):
 
     @abstractmethod
     def closing_mask(self, market: qrl.Market) -> pl.Series:
+        """
+        Determines which positions to close, possibly based on market data.
+
+        Parameters
+        ----------
+        market : qrl.Market
+            Market object from which to derive closing conditions.
+
+        Returns
+        -------
+        pl.Series
+            Boolean mask that specifies which conditions to close.
+        """
         pass
 
     @abstractmethod
     def summarise_positions(self, market: qrl.Market) -> np.ndarray[Any, float]:
+        """
+        Summarise the current open positions and return a numpy array, to be used as part of
+        the observation for the reinforcement learning agent.
+
+        Parameters
+        ----------
+        market : qrl.Market
+            Market object to be used for summarising the position data.
+
+        Returns
+        -------
+        np.ndarray[Any, float]
+            The summary of the position data.
+        """
         pass
 
     @property
     @abstractmethod
     def summary_shape(self) -> Tuple[int, ...]:
+        """
+        The shape of the self.summarise_positions functions. Used to create the observation space 
+        of the reinforcement learning environment.
+
+        Returns
+        -------
+        Tuple[int, ...]
+            The shape of the position summary.
+        """
         pass
 
 
@@ -114,6 +181,25 @@ def value_portfolio(
     contract_type: Literal["SPOT", "FUTURE", "OPTION"] | None = None,
     apply_bid_ask_spread: bool = True,
 ) -> float:
+    """
+    Calculate the value of the portfolio in the given market.
+
+    Parameters
+    ----------
+    portfolio : pl.DataFrame
+        Portfolio object to be valuated.
+    market : qrl.Market
+        Market object to be used for deriving the portfolio value.
+    contract_type : Literal[&quot;SPOT&quot;, &quot;FUTURE&quot;, &quot;OPTION&quot;] | None, optional
+        The contract type contained in the portfolio. If None, assumes mixed contract type.
+    apply_bid_ask_spread : bool, optional
+        Whether to apply the bid ask spread for valuation, by default True.
+
+    Returns
+    -------
+    float
+        The value of the portfolio.
+    """
     if len(portfolio) == 0:
         return 0
     if contract_type is None:
@@ -136,15 +222,15 @@ def value_portfolio(
             portfolio.join(buy_prices, on="symbol_id").join(sell_prices, on="symbol_id")
         ).with_columns(pl.when(pl.col("position") < 0).then(pl.col("buy_price")).otherwise(pl.col("sell_price")).alias("price"))
         match contract_type:
-            case ContractType.SPOT:
+            case "SPOT":
                 return (
                     portfolio.select("position").to_series()
                     * portfolio.select("price").to_series()
                 ).sum()
-            case ContractType.FUTURE:
+            case "FUTURE":
                 # TODO: Implement valuation for futures contract
                 raise NotImplementedError()
-            case ContractType.OPTION:
+            case "OPTION":
                 # TODO: Implement valuation for options contract
                 raise NotImplementedError()
 
@@ -177,16 +263,16 @@ class TripleBarrierPortfolio(Portfolio):
         ).with_columns(pl.when(pl.col("position") < 0).then(pl.col("buy_price")).otherwise(pl.col("sell_price")).alias("price"))
         portfolio = portfolio.with_columns(
             pl.when(
-                pl.col("contract_id") == get_contract_id(ContractType.SPOT)
+                pl.col("contract_id") == get_contract_id("SPOT")
             ).then(
                 (pl.col("price") / pl.col("entry_price") - 1) 
                 * pl.when(pl.col("position") >= 0).then(pl.lit(1.0)).otherwise(pl.lit(-1.0))
             ).when(
-                pl.col("contract_id") == get_contract_id(ContractType.FUTURE)
+                pl.col("contract_id") == get_contract_id("FUTURE")
             ).then(
                 None
             ).when(
-                pl.col("contract_id") == get_contract_id(ContractType.OPTION)
+                pl.col("contract_id") == get_contract_id("OPTION")
             ).then(
                 None
             ).alias("pnl")
