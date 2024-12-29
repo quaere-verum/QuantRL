@@ -8,19 +8,29 @@ import polars as pl
 np.random.seed(123)
 
 if __name__ == "__main__":
+    timestep_id = np.full(100, -1, dtype=int)
+    timestep_id[np.arange(5, 100, 5)] = np.arange(19)
     market_data = {
+        "timestep_id": timestep_id,
+        "market_id": np.arange(100),
         "date_id": (np.arange(100) / 20).astype(int),
         "time_id": np.arange(100) % 20,
         "symbol_id": np.full(100, 0, dtype=int),
         "midprice": np.exp(np.cumsum(np.random.normal(0, 0.05, size=100)))
     }
-    market = qrl.Market(
-        pl.DataFrame(market_data, schema={"date_id": pl.Int8, "time_id": pl.Int8, "symbol_id": pl.Int8, "midprice": pl.Float32}),
-        bid_ask_spread=1e-4
+    market_data_frame = pl.DataFrame(
+        market_data, 
+        schema={"timestep_id": pl.Int8, "market_id": pl.Int8, "date_id": pl.Int8, "time_id": pl.Int8, "symbol_id": pl.Int8, "midprice": pl.Float32}
+    )
+    market_data_frame = market_data_frame.with_columns(pl.when(pl.col("timestep_id") == -1).then(None).otherwise(pl.col("timestep_id")).alias("timestep_id"))
+    market = qrl.HistoricalMarket(
+        market_data=market_data_frame,
+        bid_ask_spread=5
     )
     cash_account = qrl.ConstantInflowCashAccount(100)
+    print(cash_account.current_capital)
     predictive_model = qrl.TripleBarrierClassifier(
-        classifier=DriftRetrainingClassifier(BernoulliNB(), DDM()),
+        model=DriftRetrainingClassifier(BernoulliNB(), DDM()),
         share_model=False,
         market=market,
         lags=10,
@@ -29,18 +39,11 @@ if __name__ == "__main__":
         is_stationary=[False],
         lookahead_window=10,
         take_profit=0.1,
-        stop_loss=-0.15
+        stop_loss=-0.15,
+        labels=np.array([0, 1], dtype=int)
     )
     portfolio = qrl.TripleBarrierPortfolio(model=predictive_model)
-    portfolio.open_position(
-        0,
-        2.0,
-        market_data["midprice"][0] * 1.18,
-        None,
-        "SPOT",
-        None,
-    )
-    env = qrl.TradingEnv(
+    env = qrl.SingleAssetTradingEnv(
         market=market,
         cash_account=cash_account,
         portfolio=portfolio,
@@ -48,11 +51,13 @@ if __name__ == "__main__":
         market_observation_columns=["midprice"],
         lags=3,
         stride=1,
-        action_shape=(1,),
-        action_size=None,
-        episode_length=50,
+        episode_length=15,
+        take_profit=predictive_model.take_profit,
+        stop_loss=predictive_model.stop_loss,
+        horizon=predictive_model.lookahead_window,
     )
-    env.reset(options={"initial_timestep": 10})
-    for _ in range(10):
-        obs, reward, done, truncated, info = env.step(np.array([1.0]))
+    env.reset(options={"initial_timestep": 3})
+    done, truncated = False, False
+    while not done and not truncated:
+        obs, reward, done, truncated, info = env.step(np.array([0.01]))
         print(obs, reward)

@@ -25,11 +25,29 @@ portfolio_schema = {
 @dataclass
 class PositionData:
     symbol_id: int
+    """
+    The symbol_id for the position to open.
+    """
     position: float
+    """
+    The position to take. Negative values are interpreted as shorting.
+    """
     entry_price: float
+    """
+    The value of the contract per unit at the time the position is opened.
+    """
     strike_price: float | None
+    """
+    The strike price in case of a futures contract or option.
+    """
     contract_type: ContractType
+    """
+    The type of the contract.
+    """
     maturity: int | None
+    """
+    The time to maturity for the contract in case of a futures contract or option.
+    """
 
 class Portfolio(ABC):
     def __init__(self) -> None:
@@ -62,6 +80,12 @@ class Portfolio(ABC):
         """
         if position.contract_type in [ContractType.FUTURE, ContractType.OPTION]:
             assert position.strike_price is not None and position.maturity is not None
+        if position.position >= 0:
+            cash_account.withdraw(position.position * position.entry_price)
+        else:
+            # TODO: Implement logic for margin account
+            cash_account.deposit(-position.position * position.entry_price)
+
         self.open_positions.extend(
             pl.DataFrame(
                 {
@@ -105,7 +129,7 @@ class Portfolio(ABC):
         if len(self.open_positions) == 0:
             return
         else:
-            closing_mask = closing_mask or self.closing_mask(market)
+            closing_mask = self.closing_mask(market) if closing_mask is None else closing_mask
             closing_positions = self.open_positions.filter(closing_mask)
             closing_value = value_portfolio(closing_positions, market, contract_type=None)
             self.open_positions = self.open_positions.filter(~closing_mask)
@@ -236,9 +260,6 @@ class TripleBarrierPortfolio(Portfolio):
     @property
     def summary_shape(self) -> Tuple[int, ...]:
         return (1,)
-
-    def _position_returns(self, market: qrl.Market) -> pl.Series:
-        pass
 
     def closing_mask(self, market: qrl.Market) -> pl.Series:
         buy_prices = market.get_prices(side=qrl.OrderType.BUY).rename({"price": "buy_price"})

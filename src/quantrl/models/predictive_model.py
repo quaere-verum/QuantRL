@@ -1,6 +1,7 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from river.base import Classifier, Regressor
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 from abc import abstractmethod
 import polars as pl
 import numpy as np
@@ -197,7 +198,7 @@ class TripleBarrierClassifier(PredictiveModel):
                 ]
             )
 
-    def _triple_barrier_label(self, X: np.ndarray[Any, float]) -> np.ndarray[Any, float]:
+    def _triple_barrier_label(self, X: np.ndarray[Any, float]) -> Tuple[np.ndarray[Any, float]]:
         X = X / X[:, 0, np.newaxis] - 1
         profit = np.argmax(X > self.take_profit, axis=1)
         loss = np.argmax(X < self.stop_loss, axis=1)
@@ -206,59 +207,68 @@ class TripleBarrierClassifier(PredictiveModel):
             1,
             0
         )
-        return label
+        time_to_barrier = np.min(np.stack((profit, loss), axis=1), axis=1)
+        # time_to_barrier = 0 means that neither the profit nor the loss threshold were hit,
+        # so we have to wait until lookahead_window to label this event
+        time_to_barrier[time_to_barrier == 0] = self.lookahead_window
+        return label, time_to_barrier
 
 
     def prepare_training_data(self, market: qrl.Market) -> pl.DataFrame:
         # TODO: Make sure that each training item is assigned the correct timestep_id
-        # market_data = market.get_all_data()
-        # data = (
-        #     market_data.select("timestep_id", "market_id", "symbol_id", "midprice")
-        #     .with_columns(
-        #         [
-        #             (
-        #                 pl.col("midprice").shift(-k)
-        #                 .over("symbol_id", order_by="market_id").alias(f"midprice_{k}")
-        #             )
-        #             for k in range(1, self.lookahead_window + 1)
-        #         ]
-        #     )
-        # ).drop("timestep_id", "market_id", "symbol_id").to_numpy()
+        market_data = market.get_all_data()
+        data = (
+            market_data.select("market_id", "symbol_id", "midprice")
+            .with_columns(
+                [
+                    (
+                        pl.col("midprice").shift(-k)
+                        .over("symbol_id", order_by="market_id").alias(f"midprice_{k}")
+                    )
+                    for k in range(1, self.lookahead_window + 1)
+                ]
+            )
+        ).drop("market_id", "symbol_id").to_numpy()
 
-        # label = self._triple_barrier_label(data)
-        # features = (
-        #     market_data.select(
-        #         ["timestep_id", "market_id", "symbol_id"] + self.columns
-        #     )
-        # )
-        # divisor = features.select(self.columns).clone()
-        # for col, stationary in zip(self.columns, self.is_stationary):
-        #     if stationary:
-        #         divisor._replace(col, pl.Series(col, np.ones(len(divisor))))
-        # for shift in range(self.stride, self.stride * self.lags + 1, self.stride):
-        #     shifted_features = (
-        #         (features.select(self.columns).shift(-shift) / divisor)
-        #         .with_columns(
-        #             features.select("market_id").to_series(),
-        #             features.select("symbol_id").to_series(),
-        #         )
-        #     ).rename(dict(zip(self.columns, [f"{col}_{shift}" for col in self.columns])))
-        #     features = features.join(
-        #         shifted_features,
-        #         on=["market_id", "symbol_id"]
-        #     )
-        # for col, stationary in zip(self.columns, self.is_stationary):
-        #     if not stationary:
-        #         features = features.drop(col)
-        # data_train = features.with_columns(pl.Series(name="label", values=label))
-        # return data_train.drop_nulls().drop_nans()
-        raise NotImplementedError()
+        label, time_to_barrier = self._triple_barrier_label(data)
+        features = (
+            market_data.select(
+                ["market_id", "symbol_id"] + self.columns
+            )
+        ).with_columns((pl.Series(name=None, values=time_to_barrier, dtype=pl.Int8) + pl.col("market_id") + 1).alias("label_time"))        
+
+        divisor = features.select(self.columns).clone()
+        for col, stationary in zip(self.columns, self.is_stationary):
+            if stationary:
+                divisor._replace(col, pl.Series(col, np.ones(len(divisor))))
+        for shift in range(self.stride, self.stride * self.lags + 1, self.stride):
+            shifted_features = (
+                (features.select(self.columns).shift(-shift) / divisor)
+                .with_columns(
+                    features.select("market_id").to_series(),
+                    features.select("symbol_id").to_series(),
+                )
+            ).rename(dict(zip(self.columns, [f"{col}_{shift}" for col in self.columns])))
+            features = features.join(
+                shifted_features,
+                on=["market_id", "symbol_id"]
+            )
+        for col, stationary in zip(self.columns, self.is_stationary):
+            if not stationary:
+                features = features.drop(col)
+        data_train = features.with_columns(pl.Series(name="label", values=label)).drop("market_id").rename({"label_time": "market_id"}).sort("market_id", "symbol_id")
+        data_train = data_train.join(
+            market_data.select("timestep_id", "market_id"),
+            on="market_id"
+        )
+        data_train = data_train.with_columns(pl.col("timestep_id").backward_fill())
+        return data_train
 
     @property
     def performance(self) -> float:
         return np.nan
     
-    def polars_to_features(self, market: qrl.Market, symbol_id: int) -> Dict[str, float]:
+    def market_to_features(self, market: qrl.Market, symbol_id: int) -> Dict[str, float]:
         features = dict(
             zip(
                 self.feature_names, 
@@ -273,5 +283,7 @@ class TripleBarrierClassifier(PredictiveModel):
         )
         for col, stationary in zip(self.columns, self.is_stationary):
             if not stationary:
+                # Delete this value because it will always be 1, since we divide
+                # non-stationary features by their most recent value
                 del features[col]
         return features

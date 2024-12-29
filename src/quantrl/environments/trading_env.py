@@ -100,37 +100,39 @@ class SingleAssetTradingEnv(qrl.BaseEnv):
 
     def _process_action(self, action: np.ndarray[Any, float | int]) -> Iterable[Dict[str, float | int]]:
         if action.item() >= 0:
-            price = self.market.get_prices(side=qrl.OrderType.BUY).to_dict()["price"]
+            price = self.market.get_prices(side=qrl.OrderType.BUY).select("price").item()
         else:
-            price = self.market.get_prices(side=qrl.OrderType.SELL).to_dict()["price"]
+            price = self.market.get_prices(side=qrl.OrderType.SELL).select("price").item()
         investment = action.item() * self.cash_account.current_capital
-        self.cash_account.withdraw(investment)
         return [
-                {
-                "symbol_id": self._symbol_id,
-                "position": investment / price,
-                "entry_price": price,
-                "strike_price": None,
-                "contract": qrl.ContractType.SPOT,
-                "maturity": self.horizon,
-            }
+            qrl.PositionData(
+                symbol_id=self._symbol_id,
+                position=investment / price,
+                entry_price=price,
+                strike_price=None,
+                contract_type=qrl.ContractType.SPOT,
+                maturity=None,
+            )
         ]
 
     def closing_positions(self, action: np.ndarray[Any, float | int]) -> pl.Series | None:
-        buy_prices = self.market.get_prices(side=qrl.OrderType.BUY).rename({"price": "buy_price"})
-        sell_prices = self.market.get_prices(side=qrl.OrderType.SELL).rename({"price": "sell_price"})
-    
-        portfolio = (
-            self.portfolio.open_positions.join(buy_prices, on="symbol_id").join(sell_prices, on="symbol_id")
-        ).with_columns(pl.when(pl.col("position") < 0).then(pl.col("buy_price")).otherwise(pl.col("sell_price")).alias("price"))
-        portfolio = portfolio.with_columns(
-            (
-                (pl.col("price") / pl.col("entry_price") - 1) 
-                * pl.when(pl.col("position") >= 0).then(pl.lit(1.0)).otherwise(pl.lit(-1.0))
-            ).alias("pnl")   
-        )
-        return (
-            (portfolio.select("pnl").to_series() > self.take_profit) 
-            | (portfolio.select("pnl").to_series() < self.stop_loss)
-            | (portfolio.select("time_remaining") == 0)
-        )
+        if len(self.portfolio.open_positions) == 0:
+            return None
+        else:
+            buy_prices = self.market.get_prices(side=qrl.OrderType.BUY).rename({"price": "buy_price"})
+            sell_prices = self.market.get_prices(side=qrl.OrderType.SELL).rename({"price": "sell_price"})
+        
+            portfolio = (
+                self.portfolio.open_positions.join(buy_prices, on="symbol_id").join(sell_prices, on="symbol_id")
+            ).with_columns(pl.when(pl.col("position") < 0).then(pl.col("buy_price")).otherwise(pl.col("sell_price")).alias("price"))
+            portfolio = portfolio.with_columns(
+                (
+                    (pl.col("price") / pl.col("entry_price") - 1) 
+                    * pl.when(pl.col("position") >= 0).then(pl.lit(1.0)).otherwise(pl.lit(-1.0))
+                ).alias("pnl")   
+            )
+            return (
+                (portfolio.select("pnl").to_series() > self.take_profit) 
+                | (portfolio.select("pnl").to_series() < self.stop_loss)
+                | (portfolio.select("time_remaining").to_series() == 0).fill_null(False)
+            )

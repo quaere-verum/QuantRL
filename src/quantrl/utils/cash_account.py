@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from abc import ABC
 
+#TODO: Add logic for margin account
 @dataclass
 class CashAccount(ABC):
     initial_capital: float

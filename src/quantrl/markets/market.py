@@ -22,9 +22,9 @@ class Market(ABC):
             ["timestep_id", "market_id", "date_id", "time_id", "symbol_id", "midprice"],
             all_market_data.columns
         ).all(), (
-            "spot_price dataframe must contain columns with timestep_id, date_id, time_id, symbol_id"
+            "spot_price dataframe must contain columns with timestep_id, market_id, date_id, time_id, symbol_id"
         )
-        timestep_id = all_market_data.select("timestep_id").unique().to_numpy().flatten()
+        timestep_id = all_market_data.select("timestep_id").drop_nulls().unique().to_numpy().flatten()
         timestep_id.sort()
         assert timestep_id.min() == 0, "timestep_id should start at 0."
         assert np.all(np.diff(timestep_id) == 1), "timestep_id should contain consecutive integer values."
@@ -42,7 +42,7 @@ class Market(ABC):
                 assert all_market_data.schema[col].is_numeric()
 
         
-        self._all_symbols = all_market_data.select("symbol_id").unique().to_numpy()
+        self._all_symbols = all_market_data.select("symbol_id").unique().to_numpy().flatten()
         self._t: int | None = None
         self._market_id: int | None = None
         # market_id = self.market_data.select("date_id", "time_id").unique().sort("date_id", "time_id").with_row_index("market_id")
@@ -153,13 +153,19 @@ class Market(ABC):
 class HistoricalMarket(Market):
     market_data: pl.DataFrame
 
+    def __post_init__(self):
+        super().__post_init__()
+
     def reset(self, timestep: int) -> None:
         self._t = timestep
         self._market_id = int(self.market_data.filter(pl.col("timestep_id") == self._t).select("market_id").max().item())
 
     def get_all_data(self, symbol_id = None, columns = None):
         if symbol_id is None:
-            symbol_id = pl.Series(self._all_symbols)
+            return (
+                self.market_data
+                .select(pl.all() if columns is None else columns)
+            )
         elif isinstance(symbol_id, int):
             symbol_id = [symbol_id]
         else:
@@ -177,11 +183,11 @@ class HistoricalMarket(Market):
             stride = 1
         assert self._market_id - stride * lags >= 0
         if symbol_id is None:
-            symbol_id = pl.Series(self._all_symbols)
+            symbol_id = self._all_symbols.tolist()
         elif isinstance(symbol_id, int):
             symbol_id = [symbol_id]
         else:
-            symbol_id = pl.Series(values=symbol_id.flatten())
+            symbol_id = symbol_id.flatten().tolist()
         data = (
             self.market_data
             .filter(
