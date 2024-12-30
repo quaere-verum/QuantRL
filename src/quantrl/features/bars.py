@@ -30,10 +30,10 @@ def calculate_bars(
         )
         .drop("cm")
     )
-    volume_bars = (
+    bars = (
         dataframe
         .group_by("bar_id", "symbol_id")
         .agg(aggregate_functions)
     ).sort("bar_id", "symbol_id")
-    return volume_bars
+    return bars
     
