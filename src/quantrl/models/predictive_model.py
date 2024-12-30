@@ -207,10 +207,19 @@ class TripleBarrierClassifier(PredictiveModel):
             1,
             0
         )
-        time_to_barrier = np.min(np.stack((profit, loss), axis=1), axis=1)
-        # time_to_barrier = 0 means that neither the profit nor the loss threshold were hit,
-        # so we have to wait until lookahead_window to label this event
-        time_to_barrier[time_to_barrier == 0] = self.lookahead_window
+        time_to_barrier = np.min(
+            np.stack(
+                (
+                    # profit = 0 or loss = 0 means that the threshold were not hit,
+                    # so we have to wait until lookahead_window to get this information
+                    np.where(profit == 0, self.lookahead_window, profit), 
+                    np.where(loss == 0, self.lookahead_window, loss),
+                ), 
+                axis=1
+            ), 
+            axis=1
+        )
+        
         return label, time_to_barrier
 
 
@@ -256,12 +265,21 @@ class TripleBarrierClassifier(PredictiveModel):
         for col, stationary in zip(self.columns, self.is_stationary):
             if not stationary:
                 features = features.drop(col)
-        data_train = features.with_columns(pl.Series(name="label", values=label)).drop("market_id").rename({"label_time": "market_id"}).sort("market_id", "symbol_id")
-        data_train = data_train.join(
-            market_data.select("timestep_id", "market_id"),
-            on="market_id"
+        data_train = (
+            features
+            .with_columns(pl.Series(name="label", values=label))
+            .drop("market_id")
+            .rename({"label_time": "market_id"})
+            .sort("market_id", "symbol_id")
+            .join(
+                market_data.select("timestep_id", "market_id"),
+                on="market_id"
+            )
+            .with_columns(
+                pl.col("timestep_id").backward_fill()
+            )
+            .drop_nulls()
         )
-        data_train = data_train.with_columns(pl.col("timestep_id").backward_fill())
         return data_train
 
     @property

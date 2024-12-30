@@ -26,6 +26,10 @@ class SingleAssetTradingEnv(qrl.BaseEnv):
 
     def reset(self, *, seed = None, options = None):
         super().reset(seed=seed, options=options)
+        timstep_id_end = self._t + self.episode_length
+        assert timstep_id_end <= self.market.get_all_data(columns=["timestep_id"]).to_series().max(), (
+            f"Not enough data to start at timestep_id={self._t} with episode length {self.episode_length}."
+        )
         self._step = 0
         self._current_portfolio_value = self.cash_account.current_capital
 
