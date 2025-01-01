@@ -16,6 +16,7 @@ river = "^0.22.0"
 gymnasium = "^1.0.0"
 setuptools = "^75.6.0"
 matplotlib = "^3.10.0"
+pyarrow = "^18.1.0"
 
 
 [build-system]

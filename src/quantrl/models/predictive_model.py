@@ -252,7 +252,7 @@ class TripleBarrierClassifier(PredictiveModel):
                 divisor._replace(col, pl.Series(col, np.ones(len(divisor))))
         for shift in range(self.stride, self.stride * self.lags + 1, self.stride):
             shifted_features = (
-                (features.select(self.columns).shift(-shift) / divisor)
+                (features.select(self.columns).shift(shift) / divisor)
                 .with_columns(
                     features.select("market_id").to_series(),
                     features.select("symbol_id").to_series(),

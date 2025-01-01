@@ -7,7 +7,7 @@ import gymnasium as gym
 from dataclasses import dataclass
 
 @dataclass
-class SingleAssetTradingEnv(qrl.BaseEnv):
+class TradingEnv(qrl.BaseEnv):
     episode_length: int
     take_profit: float
     stop_loss: float
@@ -15,14 +15,12 @@ class SingleAssetTradingEnv(qrl.BaseEnv):
 
     def __post_init__(self):
         super().__post_init__()
-        assert self.predictive_model.symbols.size == 1
-        symbol_id = self.market.get_all_data().select("symbol_id").unique().to_numpy()
-        assert symbol_id.size == 1
-        self._symbol_id = symbol_id.item()
+        self._symbol_ids = self.market.get_all_data().select("symbol_id").unique().to_numpy().flatten()
         self._step: int | None = None
         self._previous_portfolio_value: float | None = None
         self._current_portfolio_value: float | None = None
-        self.action_space = gym.spaces.Box(-1, 1, (1,))
+        # Action space dim is the number of assets plus the risk free asset (cash)
+        self.action_space = gym.spaces.Box(-1, 1, (self._symbol_ids.size + 1,))
 
     def reset(self, *, seed = None, options = None):
         super().reset(seed=seed, options=options)
@@ -66,7 +64,14 @@ class SingleAssetTradingEnv(qrl.BaseEnv):
     @property
     def state(self) -> Dict[str, np.ndarray[Any, float]]:
         return {
-            "market": self.market.get_current_data(self.lags, self.stride, columns=self.market_observation_columns).to_numpy(),
+            "market": self.market.get_current_data(
+                self.lags, 
+                self.stride, 
+                columns=self.market_observation_columns + ["market_id", "symbol_id"]
+            )
+            .to_pandas()
+            .pivot(index="market_id", columns="symbol_id", values=self.market_observation_columns)
+            .values,
             "portfolio": self.portfolio.summarise_positions(self.market),
             "cash_account": np.array([self.cash_account.current_capital]),
             "predictive_model": np.array(
@@ -102,22 +107,27 @@ class SingleAssetTradingEnv(qrl.BaseEnv):
         return dict()
     
 
-    def _process_action(self, action: np.ndarray[Any, float | int]) -> Iterable[Dict[str, float | int]]:
-        if action.item() >= 0:
-            price = self.market.get_prices(side=qrl.OrderType.BUY).select("price").item()
-        else:
-            price = self.market.get_prices(side=qrl.OrderType.SELL).select("price").item()
-        investment = action.item() * self.cash_account.current_capital
-        return [
-            qrl.PositionData(
-                symbol_id=self._symbol_id,
-                position=investment / price,
-                entry_price=price,
-                strike_price=None,
-                contract_type=qrl.ContractType.SPOT,
-                maturity=None,
+    def _process_action(self, action: np.ndarray[Any, float | int]) -> Iterable[qrl.PositionData]:
+        positions = []
+        buy_prices = price = self.market.get_prices(side=qrl.OrderType.BUY)
+        sell_prices = self.market.get_prices(side=qrl.OrderType.SELL)
+        for position, symbol_id in zip(action[1:], self._symbol_ids):
+            if position >= 0:
+                price = buy_prices.filter(pl.col("symbol_id") == symbol_id).select("price").item()
+            else:
+                price = sell_prices.filter(pl.col("symbol_id") == symbol_id).select("price").item()
+            investment = position * self.cash_account.current_capital
+            positions.append(
+                qrl.PositionData(
+                    symbol_id=symbol_id,
+                    position=investment / price,
+                    entry_price=price,
+                    strike_price=None,
+                    contract_type=qrl.ContractType.SPOT,
+                    maturity=None,
+                )
             )
-        ]
+        return positions
 
     def closing_positions(self, action: np.ndarray[Any, float | int]) -> pl.Series | None:
         if len(self.portfolio.open_positions) == 0:

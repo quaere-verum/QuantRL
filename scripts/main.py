@@ -23,6 +23,12 @@ if __name__ == "__main__":
         schema={"timestep_id": pl.Int8, "market_id": pl.Int8, "date_id": pl.Int8, "time_id": pl.Int8, "symbol_id": pl.Int8, "midprice": pl.Float32}
     )
     market_data_frame = market_data_frame.with_columns(pl.when(pl.col("timestep_id") == -1).then(None).otherwise(pl.col("timestep_id")).alias("timestep_id"))
+    market_data_frame = pl.concat(
+        (
+            market_data_frame,
+            market_data_frame.with_columns(pl.col("symbol_id").add(1), pl.Series("midprice", np.exp(np.cumsum(np.random.normal(0, 0.05, size=100)))).cast(pl.Float32))
+        ),
+    )
     market = qrl.HistoricalMarket(
         market_data=market_data_frame,
         bid_ask_spread=5
@@ -43,7 +49,7 @@ if __name__ == "__main__":
         labels=np.array([0, 1], dtype=int)
     )
     portfolio = qrl.TripleBarrierPortfolio(model=predictive_model)
-    env = qrl.SingleAssetTradingEnv(
+    env = qrl.TradingEnv(
         market=market,
         cash_account=cash_account,
         portfolio=portfolio,
@@ -58,6 +64,6 @@ if __name__ == "__main__":
     )
     env.reset(options={"initial_timestep": 3})
     done, truncated = False, False
-    while not done and not truncated:
-        obs, reward, done, truncated, info = env.step(np.array([0.01]))
+    for _ in range(5):
+        obs, reward, done, truncated, info = env.step(np.array([0, 0.01, 0.01]))
         print(obs, reward)

@@ -200,7 +200,7 @@ class HistoricalMarket(Market):
                     )
                 )
             )
-            .sort("timestep_id", "symbol_id")
+            .sort("market_id", "symbol_id")
         )
         return data.select(pl.all() if columns is None else columns)
     
@@ -223,3 +223,4 @@ class HistoricalMarket(Market):
     def step(self) -> None:
         self._t += 1
         self._market_id = int(self.market_data.filter(pl.col("timestep_id") == self._t).select("market_id").max().item())
+        
