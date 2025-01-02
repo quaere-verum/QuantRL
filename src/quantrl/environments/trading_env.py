@@ -16,6 +16,7 @@ class TradingEnv(qrl.BaseEnv):
     def __post_init__(self):
         super().__post_init__()
         self._symbol_ids = self.market.get_all_data().select("symbol_id").unique().to_numpy().flatten()
+        self._symbol_ids.sort()
         self._step: int | None = None
         self._previous_portfolio_value: float | None = None
         self._current_portfolio_value: float | None = None

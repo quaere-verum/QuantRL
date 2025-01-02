@@ -24,6 +24,14 @@ class Market(ABC):
         ).all(), (
             "spot_price dataframe must contain columns with timestep_id, market_id, date_id, time_id, symbol_id"
         )
+        assert (
+            all_market_data
+            .group_by("market_id", "symbol_id")
+            .agg(pl.col("market_id").count().alias("pk_count"))
+            .select("pk_count")
+            .to_series()
+            .max() == 1
+        ), ("The combination (market_id, symbol_id) should be a primary key.")
         timestep_id = all_market_data.select("timestep_id").drop_nulls().unique().to_numpy().flatten()
         timestep_id.sort()
         assert timestep_id.min() == 0, "timestep_id should start at 0."

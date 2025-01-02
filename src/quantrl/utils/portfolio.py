@@ -13,13 +13,13 @@ class ContractType(Enum):
     OPTION = 3
 
 portfolio_schema = {
-    "symbol_id": pl.Int8,
+    "symbol_id": pl.Int16,
     "position": pl.Float32,
     "entry_price": pl.Float32,
     "strike_price": pl.Float32,
     "contract_id": pl.Int8,
-    "maturity": pl.Int8,
-    "time_remaining": pl.Int8
+    "maturity": pl.Int16,
+    "time_remaining": pl.Int16
 }
 
 @dataclass
@@ -133,7 +133,10 @@ class Portfolio(ABC):
             closing_positions = self.open_positions.filter(closing_mask)
             closing_value = value_portfolio(closing_positions, market, contract_type=None)
             self.open_positions = self.open_positions.filter(~closing_mask)
-            cash_account.deposit(closing_value)
+            if closing_value >= 0:
+                cash_account.deposit(closing_value)
+            else:
+                cash_account.withdraw(-closing_value)
 
     @abstractmethod
     def closing_mask(self, market: qrl.Market) -> pl.Series:

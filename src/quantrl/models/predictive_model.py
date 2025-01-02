@@ -26,6 +26,10 @@ class PredictiveModel:
     """
     Whether to share the classifier for each symbol_id, or use a unique one per symbol_id.
     """
+    buffer_size: int
+    """
+    Size of the buffer that is used to calculate model performance across a rolling window.
+    """
 
     @abstractmethod
     def prepare_training_data(self, market: qrl.Market) -> pl.DataFrame:
@@ -72,7 +76,10 @@ class PredictiveModel:
                 for symbol_id in symbols
             }
         self.features = [col for col in self.data_train.columns if col not in ["timestep_id", "symbol_id", "label"]]
+        self._label_container: Dict[int, np.ndarray] | None = None
+        self._ptr: int | None = None
         self._t: int | None = None
+        self._buffer_filled: bool | None = None
     
     def reset(self, timestep: int | None = None) -> None:
         """
@@ -85,6 +92,7 @@ class PredictiveModel:
             from historical data, then timestep = n will be necessary.
         """
         self._t = timestep or 0
+        self._ptr = 0
         if not self.share_model:
             self._model = {
                 int(symbol_id): cp.deepcopy(self.model)
@@ -96,6 +104,7 @@ class PredictiveModel:
                 int(symbol_id): model
                 for symbol_id in self.symbols
             }
+        self._label_container = np.zeros(shape=(self.buffer_size, 2), dtype=float)
 
     def step(self) -> None:
         """
@@ -108,10 +117,23 @@ class PredictiveModel:
             y_train = data_train.select("label").to_numpy().flatten()
             symbol_ids = data_train.select("symbol_id").to_numpy().flatten().astype(int)
             for Xi, yi, symbol_id in zip(X_train, y_train, symbol_ids):
+                if isinstance(self._model[symbol_id], Regressor):
+                    model_pred = self._model[symbol_id].predict_one(Xi)
+                else:
+                    proba = self._model[symbol_id].predict_proba_one(Xi)
+                    distribution = np.zeros_like(self.labels, dtype=float)
+                    for key, value in proba.items():
+                        distribution[key] = value
+                    model_pred = distribution.argmax().item()
+                self._ptr = (self._ptr + 1) % (self.buffer_size - 1)
+                if self._ptr == 0:
+                    self._buffer_filled = True
+                self._label_container[self._ptr] = (yi, model_pred)
                 self._model[symbol_id].learn_one(
                     dict(zip(self.features, Xi)),
                     yi
                 )
+        
 
     def predict(self, market: qrl.Market, symbol_id: int, *, return_distribution: bool = False) -> int | np.ndarray[Any, float]:
         """
@@ -284,7 +306,10 @@ class TripleBarrierClassifier(PredictiveModel):
 
     @property
     def performance(self) -> float:
-        return np.nan
+        return np.mean(
+            self._label_container[:self._ptr if not self._buffer_filled else None, 0] ==
+            self._label_container[:self._ptr if not self._buffer_filled else None, 1] 
+        )   
     
     def market_to_features(self, market: qrl.Market, symbol_id: int) -> Dict[str, float]:
         features = dict(
