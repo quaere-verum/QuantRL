@@ -31,7 +31,7 @@ class TradingEnv(qrl.BaseEnv):
             f"Not enough data to start at timestep_id={self._t} with episode length {self.episode_length}."
         )
         self._step = 0
-        self._current_portfolio_value = self.cash_account.current_capital(qrl.AccountType.CASH)
+        self._current_portfolio_value = self.cash_account.current_balance(qrl.AccountType.CASH)
 
     def step(self, action: np.ndarray[Any, float | int]) -> Tuple[Dict[str, np.ndarray[Any, float]], float, bool, bool, Dict[str, Any]]:
         self._t += 1
@@ -61,9 +61,9 @@ class TradingEnv(qrl.BaseEnv):
                 contract_type=None,
                 apply_bid_ask_spread=True,
             ) 
-            + self.cash_account.current_capital(qrl.AccountType.CASH)
-            + self.cash_account.current_capital(qrl.AccountType.SHORT)
-            + self.cash_account.current_capital(qrl.AccountType.MARGIN)
+            + self.cash_account.current_balance(qrl.AccountType.CASH)
+            + self.cash_account.current_balance(qrl.AccountType.SHORT)
+            + self.cash_account.current_balance(qrl.AccountType.MARGIN)
         )
         return self.state, self.reward, self.done, self.truncated, self.info
 
@@ -81,9 +81,9 @@ class TradingEnv(qrl.BaseEnv):
             "portfolio": self.portfolio.summarise_positions(self.market),
             "cash_account": np.array(
                 [
-                    self.cash_account.current_capital(qrl.AccountType.CASH),
-                    self.cash_account.current_capital(qrl.AccountType.SHORT),
-                    self.cash_account.current_capital(qrl.AccountType.MARGIN),
+                    self.cash_account.current_balance(qrl.AccountType.CASH),
+                    self.cash_account.current_balance(qrl.AccountType.SHORT),
+                    self.cash_account.current_balance(qrl.AccountType.MARGIN),
                 ]
             ),
             "predictive_model": np.array(
@@ -130,7 +130,7 @@ class TradingEnv(qrl.BaseEnv):
                 price = buy_prices.filter(pl.col("symbol_id") == symbol_id).select("price").item()
             else:
                 price = sell_prices.filter(pl.col("symbol_id") == symbol_id).select("price").item()
-            investment = position * self.cash_account.current_capital(qrl.AccountType.CASH)
+            investment = position * self.cash_account.current_balance(qrl.AccountType.CASH)
             positions.append(
                 qrl.PositionData(
                     symbol_id=symbol_id,

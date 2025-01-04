@@ -28,7 +28,8 @@ class CashAccount(ABC):
     @abstractmethod
     def next_inflow(self) -> float:
         """
-        The amount of external capital flowing in (or out) at the next timestep.
+        The amount of external capital flowing into (or out of) 
+        the cash account at the next timestep.
 
         Returns
         -------
@@ -37,7 +38,7 @@ class CashAccount(ABC):
         """
         pass
 
-    def current_capital(self, account: AccountType) -> float:
+    def current_balance(self, account: AccountType) -> float:
         match account:
             case AccountType.CASH:
                 return self._current_capital
