@@ -77,17 +77,13 @@ if __name__ == "__main__":
         horizon=predictive_model.lookahead_window,
         margin_percent=0.3
     )
-    market_data_frame.select("market_id", "symbol_id", "midprice").to_pandas().pivot(index="market_id", columns="symbol_id", values="midprice").plot()
-    plt.show()
     import time
     start = time.time()
     for _ in range(1):
         env.reset(options={"initial_timestep": 7})
         done, truncated = False, False
-        step = 0
         while not done and not truncated:
             obs, reward, done, truncated, info = env.step(np.array([0, 0.1, -0.1]))
-            step += 1
             print(obs, reward)
         print("=" * 50)
 
