@@ -14,12 +14,13 @@ class ContractType(Enum):
 
 portfolio_schema = {
     "symbol_id": pl.Int16,
-    "position": pl.Float32,
-    "entry_price": pl.Float32,
-    "strike_price": pl.Float32,
+    "position": pl.Float64,
+    "entry_price": pl.Float64,
+    "strike_price": pl.Float64,
     "contract_id": pl.Int8,
     "maturity": pl.Int16,
-    "time_remaining": pl.Int16
+    "time_remaining": pl.Int16,
+    "margin_percent": pl.Float64,
 }
 
 @dataclass
@@ -48,8 +49,12 @@ class PositionData:
     """
     The time to maturity for the contract in case of a futures contract or option.
     """
+    margin_percent: float | None
+    """
+    In case of shortselling, specifies the required margin.
+    """
 
-class Portfolio(ABC):
+class Portfolio(ABC): 
     def __init__(self) -> None:
         self.open_positions = pl.DataFrame(
             schema=portfolio_schema
@@ -81,10 +86,13 @@ class Portfolio(ABC):
         if position.contract_type in [ContractType.FUTURE, ContractType.OPTION]:
             assert position.strike_price is not None and position.maturity is not None
         if position.position >= 0:
-            cash_account.withdraw(position.position * position.entry_price)
+            cash_account.withdraw(position.position * position.entry_price, account=qrl.AccountType.CASH)
         else:
-            # TODO: Implement logic for margin account
-            cash_account.deposit(-position.position * position.entry_price)
+            assert position.margin_percent is not None
+            cash_account.deposit(-position.position * position.entry_price, account=qrl.AccountType.SHORT)
+            margin = -position.position * position.entry_price * position.margin_percent
+            cash_account.withdraw(margin, account=qrl.AccountType.CASH)
+            cash_account.deposit(margin, account=qrl.AccountType.MARGIN)
 
         self.open_positions.extend(
             pl.DataFrame(
@@ -96,6 +104,7 @@ class Portfolio(ABC):
                     "contract_id": position.contract_type.value,
                     "maturity": position.maturity,
                     "time_remaining": position.maturity,
+                    "margin_percent": position.margin_percent,
                 },
                 schema=portfolio_schema
             )
@@ -129,14 +138,48 @@ class Portfolio(ABC):
         if len(self.open_positions) == 0:
             return
         else:
+            # Determine which positions will be closed
             closing_mask = self.closing_mask(market) if closing_mask is None else closing_mask
             closing_positions = self.open_positions.filter(closing_mask)
-            closing_value = value_portfolio(closing_positions, market, contract_type=None)
+            
+            # All long positions are closed by simply selling the assets
+            closing_long_positions = closing_positions.filter(pl.col("position") >= 0)
+            closing_long_value = value_portfolio(closing_long_positions, market, contract_type=None)
+            cash_account.deposit(closing_long_value, account=qrl.AccountType.CASH)
+            
+            # Short positions are closed by
+            # 1) Determining the margin for the specified positions
+            # 2) Determining the short sale proceeds for the specified positions
+            # 3) Determining the P&L for the specified positions
+            # The margin and short sale proceeds have to be withdrawn from the corresponding accounts.
+            # Then margin + short sale proceeds + P&L are added to the cash account.
+            closing_short_positions = (
+                closing_positions
+                .filter(pl.col("position") < 0)
+                .join(market.get_prices(side=qrl.OrderType.BUY), on="symbol_id")
+            )
+            # TODO: Maybe make margin_percent update each step based on current price, to accomodate margin calls.
+            # Current setup only works if no additional margin needs to be deposited.
+            closing_margin_value = (
+                -closing_short_positions.select("position").to_series()
+                * closing_short_positions.select("entry_price").to_series()
+                * closing_short_positions.select("margin_percent").to_series()
+            ).sum()
+            closing_short_asset_current_value = -value_portfolio(closing_short_positions, market, contract_type=None)
+            closing_short_asset_entry_value = (
+                -closing_short_positions.select("position").to_series()
+                * closing_short_positions.select("entry_price").to_series()
+            ).sum()
+            cash_account.withdraw(closing_margin_value, account=qrl.AccountType.MARGIN)
+            cash_account.withdraw(closing_short_asset_entry_value, account=qrl.AccountType.SHORT)
+            cash_account.deposit(
+                closing_margin_value
+                - closing_short_asset_current_value
+                + closing_short_asset_entry_value,
+                account=qrl.AccountType.CASH
+            )
+
             self.open_positions = self.open_positions.filter(~closing_mask)
-            if closing_value >= 0:
-                cash_account.deposit(closing_value)
-            else:
-                cash_account.withdraw(-closing_value)
 
     @abstractmethod
     def closing_mask(self, market: qrl.Market) -> pl.Series:

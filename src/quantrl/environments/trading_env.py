@@ -12,6 +12,7 @@ class TradingEnv(qrl.BaseEnv):
     take_profit: float
     stop_loss: float
     horizon: int | None
+    margin_percent: float
 
     def __post_init__(self):
         super().__post_init__()
@@ -30,7 +31,7 @@ class TradingEnv(qrl.BaseEnv):
             f"Not enough data to start at timestep_id={self._t} with episode length {self.episode_length}."
         )
         self._step = 0
-        self._current_portfolio_value = self.cash_account.current_capital
+        self._current_portfolio_value = self.cash_account.current_capital(qrl.AccountType.CASH)
 
     def step(self, action: np.ndarray[Any, float | int]) -> Tuple[Dict[str, np.ndarray[Any, float]], float, bool, bool, Dict[str, Any]]:
         self._t += 1
@@ -53,13 +54,17 @@ class TradingEnv(qrl.BaseEnv):
                 position=position,
             )
         self._previous_portfolio_value = self._current_portfolio_value
-        self._current_portfolio_value = qrl.value_portfolio(
-            portfolio=self.portfolio.open_positions,
-            market=self.market,
-            contract_type=None,
-            apply_bid_ask_spread=True,
-        ) + self.cash_account.current_capital
-
+        self._current_portfolio_value = (
+            qrl.value_portfolio(
+                portfolio=self.portfolio.open_positions,
+                market=self.market,
+                contract_type=None,
+                apply_bid_ask_spread=True,
+            ) 
+            + self.cash_account.current_capital(qrl.AccountType.CASH)
+            + self.cash_account.current_capital(qrl.AccountType.SHORT)
+            + self.cash_account.current_capital(qrl.AccountType.MARGIN)
+        )
         return self.state, self.reward, self.done, self.truncated, self.info
 
     @property
@@ -74,7 +79,13 @@ class TradingEnv(qrl.BaseEnv):
             .pivot(index="market_id", columns="symbol_id", values=self.market_observation_columns)
             .values,
             "portfolio": self.portfolio.summarise_positions(self.market),
-            "cash_account": np.array([self.cash_account.current_capital]),
+            "cash_account": np.array(
+                [
+                    self.cash_account.current_capital(qrl.AccountType.CASH),
+                    self.cash_account.current_capital(qrl.AccountType.SHORT),
+                    self.cash_account.current_capital(qrl.AccountType.MARGIN),
+                ]
+            ),
             "predictive_model": np.array(
                 [
                     self.predictive_model.predict(self.market, symbol_id)
@@ -113,11 +124,13 @@ class TradingEnv(qrl.BaseEnv):
         buy_prices = price = self.market.get_prices(side=qrl.OrderType.BUY)
         sell_prices = self.market.get_prices(side=qrl.OrderType.SELL)
         for position, symbol_id in zip(action[1:], self._symbol_ids):
-            if position >= 0:
+            if position == 0:
+                continue
+            elif position > 0:
                 price = buy_prices.filter(pl.col("symbol_id") == symbol_id).select("price").item()
             else:
                 price = sell_prices.filter(pl.col("symbol_id") == symbol_id).select("price").item()
-            investment = position * self.cash_account.current_capital
+            investment = position * self.cash_account.current_capital(qrl.AccountType.CASH)
             positions.append(
                 qrl.PositionData(
                     symbol_id=symbol_id,
@@ -126,6 +139,7 @@ class TradingEnv(qrl.BaseEnv):
                     strike_price=None,
                     contract_type=qrl.ContractType.SPOT,
                     maturity=None,
+                    margin_percent=self.margin_percent if position < 0 else None
                 )
             )
         return positions
