@@ -1,3 +1,4 @@
+# Implementation follows https://github.com/thu-ml/tianshou/blob/master/tianshou/policy/modelfree/ppo.py
 from dataclasses import dataclass
 from typing import Any, Generic, Literal, TypeVar, cast, override
 
@@ -17,7 +18,6 @@ from tianshou.utils.net.continuous import ActorProb, Critic
 from tianshou.utils.net.discrete import Actor as DiscreteActor
 from tianshou.utils.net.discrete import Critic as DiscreteCritic
 
-
 @dataclass(kw_only=True)
 class VMPOTrainingStats(TrainingStats):
     loss: SequenceSummaryStats
@@ -32,30 +32,45 @@ TVMPOTrainingStats = TypeVar("TVMPOTrainingStats", bound=VMPOTrainingStats)
 
 # TODO: the type ignore here is needed b/c the hierarchy is actually broken! Should reconsider the inheritance structure.
 class VMPOPolicy(PGPolicy[TVMPOTrainingStats], Generic[TVMPOTrainingStats]):  # type: ignore[type-var]
-    """Implementation of VMPO. arXiv:1909.12238.
 
-    :param actor: the actor network following the rules:
-        If `self.action_type == "discrete"`: (`s_B` ->`action_values_BA`).
-        If `self.action_type == "continuous"`: (`s_B` -> `dist_input_BD`).
-    :param critic: the critic network. (s -> V(s))
-    :param optim: the optimizer for actor and critic network.
-    :param dist_fn: distribution class for computing the action.
-    :param action_space: env's action space
-    :param max_grad_norm: clipping gradients in back propagation.
-    :param discount_factor: in [0, 1].
-    :param reward_normalization: normalize estimated values to have std close to 1.
-    :param deterministic_eval: if True, use deterministic evaluation.
-    :param observation_space: the space of the observation.
-    :param action_scaling: if True, scale the action from [-1, 1] to the range of
-        action_space. Only used if the action_space is continuous.
-    :param action_bound_method: method to bound action to range [-1, 1].
-        Only used if the action_space is continuous.
-    :param lr_scheduler: if not None, will be called in `policy.update()`.
+    """
+    Implementation of VMPO. arXiv:1909.12238.
 
-    .. seealso::
-
-        Please refer to :class:`~tianshou.policy.BasePolicy` for more detailed
-        explanation.
+    Parameters
+    ----------
+    actor : Actor 
+        The actor network following the rules:
+            If `self.action_type == "discrete"`: (`s_B` ->`action_values_BA`).
+            If `self.action_type == "continuous"`: (`s_B` -> `dist_input_BD`).
+    critic: Critic
+        The critic network. (s -> V(s)).
+    eta : torch.nn.Parameter
+        Controls the temperature.
+    nu : torch.nn.Parameter
+        Controls KL-divergence loss.
+    optim : torch.optim.Optimizer
+        The optimizer for actor and critic network, and the eta and nu parameter.
+    dist_fn : Callable[[torch.Tensor], torch.distributions.Distribution]
+        Distribution class for computing the action.
+    action_space : gym.spaces.Space
+        The environment's action space.
+    max_grad_norm : float
+        Clipping gradients in back propagation.
+    discount_factor : float
+        The discount factor for future rewards, between 0 and 1.
+    reward_normalization : bool
+        Whether to normalize rewards.
+    deterministic_eval : bool
+        Whether to use deterministic evaluation.
+    observation_space : gym.spaces.Space
+        The environment's observation space.
+    action_scaling : bool
+        Whether to apply action scaling from [-1, 1] to the range of the
+        action space. Only applies to continuous action spaces.
+    action_bound_method : Literal['clip', 'tanh']
+        Method for rescaling the action. Only applies to continuous spaces.
+    lr_scheduler : TLearningRateScheduler
+        If not None, will be called in `policy.update()`.
     """
 
     def __init__(
