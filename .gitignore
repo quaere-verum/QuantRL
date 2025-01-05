@@ -1,3 +1,6 @@
+.vscode/*
+# Exclude scripts whose sole purpose is to test the current codebase
+*/test*.py
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
