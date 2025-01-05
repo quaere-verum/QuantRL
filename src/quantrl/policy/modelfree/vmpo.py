@@ -116,6 +116,7 @@ class VMPOPolicy(PGPolicy[TVMPOTrainingStats], Generic[TVMPOTrainingStats]):  # 
         self.eta = eta
         self.nu = nu
 
+    @override
     @staticmethod
     def _compile() -> None:
         f64 = np.array([0, 1], dtype=np.float64)
