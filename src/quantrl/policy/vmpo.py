@@ -12,7 +12,6 @@ from typing import Tuple, Any
 @dataclass
 class VMPO:
     actor_critic: ActorCritic
-    environment: gym.Env
     eps_eta: float = 0.01
     eps_nu: float = 0.1
     learning_rate: float = 0.001
