@@ -170,7 +170,12 @@ class VectorReplayBuffer(BaseReplayBuffer):
         actions = np.transpose(self._action_buffer, (1, 0) + tuple(range(2, len(self.action_shape) + 2))).reshape((-1,) + self.action_shape)
         states = np.transpose(self._state_buffer, (1, 0) + tuple(range(2, len(self.state_shape) + 2))).reshape((-1,) + self.state_shape)
         rewards = np.transpose(self._reward_buffer, (1, 0)).reshape(-1)
-        terminal_states = np.transpose(self._terminal_state_buffer, (1, 0)).reshape(-1)
+        terminal_states = self._terminal_state_buffer.copy()
+        # Terminal states were gathered from vectorised envs, and may have been terminated early.
+        # These trajectories will now be stacked, so we need to set the final 'terminal_state'
+        # in each env's buffer to True, to indicate this trajectory was truncated
+        terminal_states[self._filled - 1] = True
+        terminal_states = np.transpose(terminal_states, (1, 0)).reshape(-1)
         return (
             actions[indices],
             states[indices],
