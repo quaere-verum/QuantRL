@@ -7,10 +7,11 @@ import gymnasium as gym
 from copy import deepcopy
 from quantrl.agents.actor_critic import ActorCritic
 from quantrl.utils.replay_buffer import ReplayBuffer
+from quantrl.policy.base import BasePolicy
 from typing import Tuple, Any
 
 @dataclass
-class VMPO:
+class VMPO(BasePolicy):
     actor_critic: ActorCritic
     eps_eta: float = 0.01
     eps_nu: float = 0.1

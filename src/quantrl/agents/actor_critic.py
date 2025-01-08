@@ -2,7 +2,7 @@ from quantrl.agents.preprocessing import PreprocessingNet
 import torch
 from quantrl.utils.data import to_torch
 import numpy as np
-from typing import Tuple, Callable
+from typing import Tuple
 
 class ActorContinuous(torch.nn.Module):
     def __init__(self, preprocessing_net: PreprocessingNet, action_dim: int, stochastic: bool = True):
