@@ -3,7 +3,9 @@ from typing import Tuple, Any
 import numpy as np
 from abc import ABC, abstractmethod
 
-class BaseReplayBuffer(ABC):
+
+class BaseBuffer(ABC):
+    buffer_size: int
 
     @abstractmethod
     def __post_init__(self):
@@ -40,7 +42,7 @@ class BaseReplayBuffer(ABC):
         return self[indices]
 
 @dataclass
-class ReplayBuffer(BaseReplayBuffer):
+class RolloutBuffer(BaseBuffer):
     action_shape: int
     state_shape: Tuple[int, ...]
     buffer_size: int
@@ -107,7 +109,7 @@ class ReplayBuffer(BaseReplayBuffer):
     
 
 @dataclass
-class VectorReplayBuffer(BaseReplayBuffer):
+class VectorRolloutBuffer(BaseBuffer):
     action_shape: Tuple[int, ...]
     state_shape: Tuple[int, ...]
     buffer_size: int

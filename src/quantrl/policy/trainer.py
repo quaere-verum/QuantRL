@@ -1,5 +1,5 @@
 from quantrl.policy.base import BasePolicy
-from quantrl.utils.replay_buffer import ReplayBuffer, VectorReplayBuffer
+from quantrl.utils.buffer import BaseBuffer
 from dataclasses import dataclass
 import gymnasium as gym
 import numpy as np
@@ -14,7 +14,7 @@ logging.basicConfig(format="%(asctime)s [%(levelname)s]: %(message)s", datefmt="
 class Trainer:
     policy: BasePolicy
     env_name: str
-    replay_buffer: ReplayBuffer
+    buffer: BaseBuffer
     steps_per_round: int
     test_episodes: int  | None
     test_frequency: int | None
@@ -26,30 +26,28 @@ class Trainer:
         if self.test_episodes is not None and self.test_frequency is None:
             warnings.warn("test_frequency is 'None', but test_episodes is not. No tests will be performed.")
         if not self.off_policy:
-            assert self.steps_per_round // self.replay_buffer.num_envs == self.replay_buffer.buffer_size, (
+            assert self.steps_per_round // self.buffer.num_envs == self.buffer.buffer_size, (
                 "On-policy replay buffer size should be the same as steps_per_round."
             )
-        if self.replay_buffer.num_envs == 1:
+        if self.buffer.num_envs == 1:
             self._env = gym.make(self.env_name)
         else:
-            self._env = make_vector_env(self.env_name, self.replay_buffer.num_envs)
+            self._env = make_vector_env(self.env_name, self.buffer.num_envs)
         self._logger = logging.getLogger()
         self._logger.setLevel(logging.INFO)
         self._test_rewards = []
 
     def run(self, rounds: int, epochs: int) -> None:
-        start = time.time()
-        for round in range(rounds):
+        for round in range(1, rounds + 1):
             self._logger.info(f"Training round {round} starting. Filling replay buffer.")
             self.fill_replay_buffer()
             self._logger.info(f"Finished filling replay buffer. Learning...")
-            self.policy.learn(epochs, self.replay_buffer)
+            self.policy.learn(epochs, self.buffer)
             self._logger.info(f"Training round {round} finished.")
-            if self.test_frequency is not None:
-                if round % self.test_frequency == 0:
-                    mean_test_reward, std_test_reward = self.test_policy()
-                    self._test_rewards.append(mean_test_reward)
-                    self._logger.info(f"Test reward: {mean_test_reward:.2f} +/- {std_test_reward:.2f}")
+            if self.test_frequency is not None and round % self.test_frequency == 0:
+                mean_test_reward, std_test_reward = self.test_policy()
+                self._test_rewards.append(mean_test_reward)
+                self._logger.info(f"Test reward: {mean_test_reward:.2f} +/- {std_test_reward:.2f}")
 
     def fill_replay_buffer(self) -> None:
         states, _ = self._env.reset(options={})
@@ -59,14 +57,14 @@ class Trainer:
                 actions = actions.item()
             next_states, rewards, dones, truncateds, _ = self._env.step(actions)
             terminal_states = dones | truncateds
-            self.replay_buffer.add(
+            self.buffer.add(
                 action=actions,
                 state=states,
                 reward=np.where(terminal_states, 0, rewards),
                 terminal_state=terminal_states,
             )
-            if self.replay_buffer.num_envs > 1:
-                skip_reset = dict(zip(range(self.replay_buffer.num_envs), np.logical_not(terminal_states)))
+            if self.buffer.num_envs > 1:
+                skip_reset = dict(zip(range(self.buffer.num_envs), np.logical_not(terminal_states)))
                 reset_states, _ = self._env.reset(options=skip_reset)
                 states = np.where(terminal_states[:, np.newaxis], reset_states, next_states)
             else:

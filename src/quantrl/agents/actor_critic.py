@@ -104,6 +104,6 @@ class ActorCritic(torch.nn.Module):
         else:
             raise NotImplementedError()
         
-        state_value = self.critic(state)
+        state_value = self.critic.forward(state, action)
         
         return dist_probs, action_logprobs, torch.squeeze(state_value)

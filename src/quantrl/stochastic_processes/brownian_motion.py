@@ -1,4 +1,4 @@
-from quantrl.stochastic_processes.base import StochasticProcessBase
+from quantrl.stochastic_processes.base import Noise
 import numpy as np
 from dataclasses import dataclass
 import math
@@ -6,30 +6,7 @@ from typing import Any
 
 
 @dataclass
-class GaussianNoise(StochasticProcessBase):
-    mean: float
-    standard_deviation: float
-
-    def __post_init__(self):
-        return super().__post_init__()
-
-    def reset(self, timestep):
-        return self._rng.normal(loc=self.mean, scale=self.standard_deviation, size=self.n_paths)
-
-    def step(self, **kwargs):
-        return self._rng.normal(loc=self.mean, scale=self.standard_deviation, size=self.n_paths)
-    
-    def generate_trajectories(self, T: float, *, n: int | None = None, dt: float | None = None):
-        if n is None:
-            assert dt is not None
-            n = math.floor(T / dt)
-        else:
-            assert dt is None
-        return self._rng.normal(loc=self.mean, scale=self.standard_deviation, size=(self.n_paths, n))
-    
-
-@dataclass
-class BrownianMotion(GaussianNoise):
+class BrownianMotion(Noise):
     initial_value: float
 
     def __post_init__(self):
@@ -71,3 +48,4 @@ class GeometricBrownianMotion(BrownianMotion):
     def generate_trajectories(self, T, *, n=None, dt=None):
         log_trajectories = super().generate_trajectories(T, n=n, dt=dt)
         return np.exp(log_trajectories - self.initial_value) * self.initial_value
+    
