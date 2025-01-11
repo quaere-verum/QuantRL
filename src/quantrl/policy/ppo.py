@@ -19,7 +19,6 @@ class PPO(BasePolicy):
     gamma: float = 0.97
     gae_lambda: float = 1.0
     epsilon: float = 0.1
-    normalise_rewards: bool = False
 
     def __post_init__(self):
         assert not self.actor_critic.critic.include_action
@@ -38,8 +37,6 @@ class PPO(BasePolicy):
 
     def learn(self, epochs: int, buffer: RolloutBuffer) -> None:
         actions, states, rewards, terminal_states = buffer[:]
-        if self.normalise_rewards:
-            raise NotImplementedError()
 
         with torch.no_grad():
             _, old_logprobs, _ = self._actor_critic_old.forward(states, actions)

@@ -19,7 +19,6 @@ class VMPO(BasePolicy):
     betas: Tuple[float, float] = (0.9, 0.999)
     gamma: float = 0.97
     gae_lambda: float = 1.0
-    normalise_rewards: bool = False
 
     def __post_init__(self):
         assert not self.actor_critic.critic.include_action
@@ -42,25 +41,13 @@ class VMPO(BasePolicy):
 
     def learn(self, epochs: int, buffer: RolloutBuffer) -> None:
         actions, states, rewards, terminal_states = buffer[:]
-        # discounted_returns = self._monte_carlo_returns(
-        #     terminal_states=terminal_states,
-        #     rewards=rewards,
-        #     gamma=self.gamma,
-        # )
-        # if self.normalise_rewards:
-        #     raise NotImplementedError()
-        # discounted_returns = torch.from_numpy(discounted_returns)
-        
 
         with torch.no_grad():
             old_action_dist, _, _ = self._actor_critic_old.forward(states, actions)
         
         for _ in range(epochs):
             action_dist_new, log_probs_new, state_values = self.actor_critic.forward(states, actions)
-            # advantages = (
-            #     discounted_returns
-            #     - state_values.detach()
-            # )
+
             advantages = self._gae_advantages(
                 terminal_states=terminal_states,
                 values=state_values.detach().numpy(),
