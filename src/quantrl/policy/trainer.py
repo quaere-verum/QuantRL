@@ -35,18 +35,16 @@ class Trainer:
             self._env = make_vector_env(self.env_name, self.buffer.num_envs)
         self._logger = logging.getLogger()
         self._logger.setLevel(logging.INFO)
-        self._test_rewards = []
 
     def run(self, rounds: int, epochs: int) -> None:
         for round in range(1, rounds + 1):
-            self._logger.info(f"Training round {round} starting. Filling replay buffer.")
+            self._logger.info(f"Training round {round} starting. Filling buffer.")
             self.fill_replay_buffer()
-            self._logger.info(f"Finished filling replay buffer. Learning...")
+            self._logger.info(f"Finished filling buffer. Learning...")
             self.policy.learn(epochs, self.buffer)
             self._logger.info(f"Training round {round} finished.")
             if self.test_frequency is not None and round % self.test_frequency == 0:
                 mean_test_reward, std_test_reward = self.test_policy()
-                self._test_rewards.append(mean_test_reward)
                 self._logger.info(f"Test reward: {mean_test_reward:.2f} +/- {std_test_reward:.2f}")
 
     def fill_replay_buffer(self) -> None:
