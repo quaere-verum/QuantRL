@@ -1,11 +1,18 @@
 from dataclasses import dataclass
 from typing import Tuple, Any
 import numpy as np
+from numba import njit
 from abc import ABC, abstractmethod
+from typing import Callable
 
 
 class BaseBuffer(ABC):
     buffer_size: int
+
+    @property
+    @abstractmethod
+    def steps_collected(self) -> int:
+        pass
 
     @abstractmethod
     def __post_init__(self):
@@ -40,10 +47,95 @@ class BaseBuffer(ABC):
     ) -> Tuple[np.ndarray[Any, float], np.ndarray[Any, float], np.ndarray[Any, float], np.ndarray[Any, float], np.ndarray[Any, bool]]:
         indices = np.random.choice(self._filled, sample_size, with_replacement)
         return self[indices]
+    
+    @staticmethod
+    @njit
+    def calculate_monte_carlo_returns(
+        terminal_states: np.ndarray[Any, bool],
+        rewards: np.ndarray[Any, float],
+        gamma: float
+    ) -> np.ndarray[Any, float]:
+        discounted_returns = np.zeros_like(rewards, dtype=np.float64)
+        discounted_reward = 0
+        for k in range(len(terminal_states) - 1, -1, -1):
+            if terminal_states[k]:
+                discounted_reward = 0
+            discounted_reward = rewards[k] + (gamma * discounted_reward)
+            discounted_returns[k] = discounted_reward
+        return discounted_returns
+
+    @staticmethod
+    @njit
+    def calculate_gae_advantages(
+        terminal_states: np.ndarray[Any, bool],
+        values: np.ndarray[Any, float],
+        rewards: np.ndarray[Any, float],
+        gamma: float,
+        gae_lambda: float,
+    ) -> np.ndarray[Any, float]:
+        advantages = np.zeros_like(rewards)
+        values_next = np.roll(values, -1)
+        values_next[-1] = 0
+        decay_factor = (1 - terminal_states) * gamma
+        temporal_difference_error = rewards + values_next * decay_factor - values
+        decay_factor *= gae_lambda
+        gae = 0.0
+        for k in range(len(rewards) - 1, -1, -1):
+            gae = temporal_difference_error[k] + decay_factor[k] * gae
+            advantages[k] = gae
+        return advantages
+
+    @staticmethod
+    @njit
+    def _n_step_return(
+        terminal_states: np.ndarray[Any, bool],
+        rewards: np.ndarray[Any, float],
+        target_q: np.ndarray[Any, float],
+        indices: np.ndarray[Any, int],
+        gamma: float,
+        n_step: int,
+        buffer_size: int,
+    ) -> np.ndarray[Any, float]:
+        target_shape = target_q.shape
+        batch_size = target_shape[0]
+        target_q = target_q.reshape(batch_size, -1)
+        returns = np.zeros(target_q.shape)
+        trajectory_lengths = np.full(indices.shape, n_step)
+        for n in range(n_step - 1, -1, -1):
+            now = (indices + n) % buffer_size
+            trajectory_lengths[terminal_states[now]] = n
+            returns[terminal_states[now]] = 0.0
+            returns = rewards[now].reshape(-1, 1) + gamma * returns
+        target_q[trajectory_lengths != n_step] = 0.0
+        trajectory_lengths = trajectory_lengths.reshape(-1, 1)
+        target_q = target_q * (gamma ** trajectory_lengths) + returns
+        return target_q.reshape(target_shape)
+    
+    def calculate_n_step_return(
+        self,
+        indices: np.ndarray[Any, int],
+        target_q_function: Callable[[np.ndarray], np.ndarray],
+        gamma: float,
+        n_step: int,
+    ) -> np.ndarray[Any, float]:
+        assert indices.ndim == 1
+        _, all_states, all_rewards, all_terminal_states = self[:self._filled]
+        next_indices = (indices + n_step) % self._filled
+        next_states = all_states[next_indices]
+        target_q = target_q_function(next_states)
+        return self._n_step_return(
+            terminal_states=all_terminal_states,
+            rewards=all_rewards,
+            target_q=target_q,
+            indices=indices,
+            gamma=gamma,
+            n_step=n_step,
+            buffer_size=self._filled,
+        )
 
 @dataclass
 class RolloutBuffer(BaseBuffer):
-    action_shape: int
+    action_shape: int | Tuple[int, ...]
     state_shape: Tuple[int, ...]
     buffer_size: int
 
@@ -59,6 +151,10 @@ class RolloutBuffer(BaseBuffer):
         self._state_buffer = np.empty((self.buffer_size,) + self.state_shape, dtype=float)
         self._reward_buffer = np.empty(self.buffer_size, dtype=float)
         self._terminal_state_buffer = np.empty(self.buffer_size, dtype=bool)
+    
+    @property
+    def steps_collected(self) -> int:
+        return self._filled
 
     def reset(self):
         self._ptr = 0
@@ -125,6 +221,10 @@ class VectorRolloutBuffer(BaseBuffer):
         self._reward_buffer = np.empty((self.buffer_size, self.num_envs), dtype=float)
         self._terminal_state_buffer = np.empty((self.buffer_size, self.num_envs), dtype=bool)
 
+    @property
+    def steps_collected(self) -> int:
+        return self.num_envs * self._filled
+
     def reset(self):
         self._ptr = 0
         self._filled = 0
@@ -184,3 +284,4 @@ class VectorRolloutBuffer(BaseBuffer):
             rewards[indices],
             terminal_states[indices]
         )
+    
