@@ -39,7 +39,7 @@ class Trainer:
     def run(self, rounds: int, epochs: int) -> None:
         for round in range(1, rounds + 1):
             self._logger.info(f"Training round {round} starting. Filling buffer.")
-            self.fill_replay_buffer()
+            self.fill_buffer()
             self._logger.info(f"Finished filling buffer. Learning...")
             self.policy.learn(epochs, self.buffer)
             self._logger.info(f"Training round {round} finished.")
@@ -47,7 +47,7 @@ class Trainer:
                 mean_test_reward, std_test_reward = self.test_policy()
                 self._logger.info(f"Test reward: {mean_test_reward:.2f} +/- {std_test_reward:.2f}")
 
-    def fill_replay_buffer(self) -> None:
+    def fill_buffer(self) -> None:
         states, _ = self._env.reset(options={})
         for _ in tqdm(range(self.steps_per_round)):
             actions = self.policy.act(states).detach().numpy()

@@ -107,3 +107,20 @@ class ActorCritic(torch.nn.Module):
         state_value = self.critic.forward(state, action)
         
         return dist_probs, action_logprobs, torch.squeeze(state_value)
+    
+
+class QNet(torch.nn.Module):
+    def __init__(self, preprocessing_net: PreprocessingNet, n_actions: int):
+        super().__init__()
+        self._preprocessing_net = preprocessing_net
+        self._output_layer = torch.nn.Linear(preprocessing_net.output_dim, n_actions)
+
+    def value(self, state: torch.Tensor | np.ndarray) -> torch.Tensor:
+        state = to_torch(state)
+        if state.ndim == 1:
+            state = state.unsqueeze(0)
+        return self.forward(state)
+    
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        x = self._preprocessing_net(state)
+        return self._output_layer(x)

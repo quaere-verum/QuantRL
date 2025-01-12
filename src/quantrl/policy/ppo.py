@@ -38,7 +38,7 @@ class PPO(BasePolicy):
     def learn(self, epochs: int, buffer: RolloutBuffer) -> None:
         actions, states, rewards, terminal_states = buffer[:]
         if self.gae_lambda is None:
-            monte_carlo_returns = self._monte_carlo_returns(
+            monte_carlo_returns = buffer.calculate_monte_carlo_returns(
                 terminal_states=terminal_states,
                 rewards=rewards,
                 gamma=self.gamma,
@@ -54,7 +54,7 @@ class PPO(BasePolicy):
                 advantages = monte_carlo_returns - state_values
                 critic_loss = torch.pow(monte_carlo_returns - state_values, 2).mean()
             else:
-                advantages = self._gae_advantages(
+                advantages = buffer.calculate_gae_advantages(
                     terminal_states=terminal_states,
                     values=state_values.detach().numpy(),
                     rewards=rewards,
