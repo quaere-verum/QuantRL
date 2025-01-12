@@ -86,6 +86,7 @@ class BaseBuffer(ABC):
         return advantages
 
     @staticmethod
+    @njit
     def _n_step_return(
         terminal_states: np.ndarray[Any, bool],
         rewards: np.ndarray[Any, float],
