@@ -1,9 +1,11 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import polars as pl
 import numpy as np
-from typing import Any, Literal, List
+from typing import Any, List
 from enum import Enum
+from quantrl.markets.simulation import MarketSimulator
 
 class OrderType(Enum):
     BUY = 1
@@ -53,15 +55,7 @@ class Market(ABC):
         self._all_symbols = all_market_data.select("symbol_id").unique().to_numpy().flatten()
         self._t: int | None = None
         self._market_id: int | None = None
-        # market_id = self.market_data.select("date_id", "time_id").unique().sort("date_id", "time_id").with_row_index("market_id")
-        # self.market_data = self.market_data.join(
-        #     market_id, 
-        #     on=["date_id", "time_id"],
-        # )
-        # self.market_data = self.market_data.sort("market_id", "symbol_id")
-        
 
-    @abstractmethod
     def reset(self, timestep: int) -> None:
         """
         Reset the market, to be used when resetting the reinforcement learning environment.
@@ -72,16 +66,17 @@ class Market(ABC):
             Initialise the market to start at the provided timestep. E.g. if the observations contain n lagged values
             from historical data, then timestep = n will be necessary.
         """
-        pass
+        self._t = timestep
+        self._market_id = int(self.market_data.filter(pl.col("timestep_id") == self._t).select("market_id").max().item())
 
     @abstractmethod
     def step(self) -> None:
         """
         Evolve the market by one timestep, to be used when the reinforcement learning environment takes a step.
         """
-        pass
+        self._t += 1
+        self._market_id = int(self.market_data.filter(pl.col("timestep_id") == self._t).select("market_id").max().item())
 
-    @abstractmethod
     def get_all_data(
         self, 
         symbol_id: int | np.ndarray[Any, int] | None = None, 
@@ -102,9 +97,17 @@ class Market(ABC):
         pl.DataFrame
             All market data.
         """
-        pass
+        if symbol_id is None:
+            return (
+                self.market_data
+                .select(pl.all() if columns is None else columns)
+            )
+        elif isinstance(symbol_id, int):
+            symbol_id = [symbol_id]
+        else:
+            symbol_id = pl.Series(values=symbol_id.flatten())
+        return self.market_data.filter(pl.col("symbol_id").is_in(symbol_id)).select(pl.all() if columns is None else columns)
 
-    @abstractmethod
     def get_current_data(
         self,
         lags: int = 0,
@@ -131,62 +134,6 @@ class Market(ABC):
         pl.DataFrame
             The market data for the current timestep
         """
-        pass
-
-    @abstractmethod
-    def get_prices(
-        self,
-        symbol_id: int | np.ndarray[Any, int] | None = None,
-        side: OrderType | None = None,
-    ) -> pl.DataFrame:
-        """
-        Get the current market prices for the specified symbol_ids.
-
-        Parameters
-        ----------
-        symbol_id : int | np.ndarray[Any, int] | None, optional
-            Which symbols to retrieve the prices for, by default None. If None, returns the prices for all symbols.
-        side : Literal[&quot;BUY&quot;, &quot;SELL&quot;] | None, optional
-            Which side to retrieve the prices for, by default None. If None, no bid-ask spread is applied.
-
-        Returns
-        -------
-        pl.DataFrame
-            The requested prices.
-        """
-        pass
-
-
-@dataclass
-class HistoricalMarket(Market):
-    market_data: pl.DataFrame
-
-    def __post_init__(self):
-        super().__post_init__()
-
-    def reset(self, timestep: int) -> None:
-        self._t = timestep
-        self._market_id = int(self.market_data.filter(pl.col("timestep_id") == self._t).select("market_id").max().item())
-
-    def get_all_data(self, symbol_id = None, columns = None):
-        if symbol_id is None:
-            return (
-                self.market_data
-                .select(pl.all() if columns is None else columns)
-            )
-        elif isinstance(symbol_id, int):
-            symbol_id = [symbol_id]
-        else:
-            symbol_id = pl.Series(values=symbol_id.flatten())
-        return self.market_data.filter(pl.col("symbol_id").is_in(symbol_id)).select(pl.all() if columns is None else columns)
-
-    def get_current_data(
-        self,
-        lags: int = 0,
-        stride: int | None = None,
-        symbol_id: int | np.ndarray[Any, int] | None = None,
-        columns: List[str] | None = None,
-    ) -> pl.DataFrame:
         if stride is None:
             stride = 1
         assert self._market_id - stride * lags >= 0
@@ -211,8 +158,28 @@ class HistoricalMarket(Market):
             .sort("market_id", "symbol_id")
         )
         return data.select(pl.all() if columns is None else columns)
-    
-    def get_prices(self, symbol_id = None, side = None):
+
+    @abstractmethod
+    def get_prices(
+        self,
+        symbol_id: int | np.ndarray[Any, int] | None = None,
+        side: OrderType | None = None,
+    ) -> pl.DataFrame:
+        """
+        Get the current market prices for the specified symbol_ids.
+
+        Parameters
+        ----------
+        symbol_id : int | np.ndarray[Any, int] | None, optional
+            Which symbols to retrieve the prices for, by default None. If None, returns the prices for all symbols.
+        side : Literal[&quot;BUY&quot;, &quot;SELL&quot;] | None, optional
+            Which side to retrieve the prices for, by default None. If None, no bid-ask spread is applied.
+
+        Returns
+        -------
+        pl.DataFrame
+            The requested prices.
+        """
         match side:
             case OrderType.BUY:
                 sign = 1
@@ -228,7 +195,36 @@ class HistoricalMarket(Market):
         )
         return prices.select("symbol_id", "price")
 
-    def step(self) -> None:
-        self._t += 1
-        self._market_id = int(self.market_data.filter(pl.col("timestep_id") == self._t).select("market_id").max().item())
+    @property
+    @abstractmethod
+    def market_data(self) -> pl.DataFrame:
+        pass
+
+
+@dataclass
+class HistoricalMarket(Market):
+    historical_market_data: pl.DataFrame
+
+    def __post_init__(self):
+        super().__post_init__()
+
+    @property
+    def market_data(self) -> pl.DataFrame:
+        return self.historical_market_data
         
+            
+@dataclass
+class SimulatedMarket(Market):
+    market_simulator: MarketSimulator
+
+    def __post_init__(self):
+        super().__post_init__()
+        self._market_data = self.market_simulator.reset()
+
+    @property
+    def market_data(self) -> pl.DataFrame:
+        return self._market_data
+
+    def reset(self, timestep):
+        self._market_data = self.market_simulator.reset()
+        return super().reset(timestep)
