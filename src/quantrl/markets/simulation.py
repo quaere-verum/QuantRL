@@ -599,26 +599,3 @@ class StochasticProcesses:
         T: float | None,
     ) -> np.ndarray:
         raise NotImplementedError()
-
-if __name__ == "__main__":
-    test = StochasticProcesses(123)
-    test_market = HestonProcessMarketSimulator(
-        process_generator=test,
-        initial_value=np.array([1., 1., 1.1]),
-        mu=np.array([0., 0., 0.]),
-        cov=test.generate_random_covariance_matrix(np.array([1., 0.5, 0.1])),
-        initial_value_vol=np.array([0.05, 0.05, 0.02]),
-        cov_vol=test.generate_random_covariance_matrix(np.array([1., 0.5, 0.1])),
-        sigma_vol=np.array([0.15, 0.2, 0.15]),
-        theta_vol=np.array([0.5, 0.3, 0.3]),
-        mean_vol=np.array([0.1, 0.1, 0.1]),
-        rho=np.array([0.2, 0.1, 0.1]),
-        volume_vol_sensitivity=0.5,
-        volume_vol_sensitivity_window=10,
-        volume_price_change_sensitivity_window=5,
-        volume_price_change_sensitivity=0.5,
-        volume_noise_std=0.05,
-        n=200,
-        T=10,
-    )
-    test_market.reset()
