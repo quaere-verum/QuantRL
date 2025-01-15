@@ -19,22 +19,76 @@ class MarketSimulator(ABC):
 @dataclass
 class HestonProcessMarketSimulator(MarketSimulator):
     process_generator: "StochasticProcesses"
+    """
+    The object generating the prices and volumes for each asset.
+    """
     initial_value: np.ndarray
+    """
+    The initial price for each of the assets.
+    """
     mu: np.ndarray
+    """
+    The drift in the Brownian motion driving the prices for each of the assets.
+    """
     cov: np.ndarray
+    """
+    The covariance matrix specifying the correlations between the Brownian motion
+    driving the prices.
+    """
     initial_value_vol: np.ndarray
+    """
+    The initial volatility.
+    """
     cov_vol: np.ndarray
+    """
+    The covariance matrix specifying the correlations between the Brownian motion
+    driving the volatilities.
+    """
     sigma_vol: np.ndarray
+    """
+    Volatility of volatility for each of the assets.
+    """
     theta_vol: np.ndarray
+    """
+    Mean reversion speed of the volatility process for each of the assets.
+    """
     mean_vol: np.ndarray
+    """
+    Mean value that the volatility reverts to for each of the assets.
+    """
     rho: np.ndarray
+    """
+    The correlation between the Brownian motion driving the price, and the Brownian motion
+    driving the volatility for each of the assets.
+    """
     volume_vol_sensitivity_window: int
+    """
+    The size of the moving average window for volatility, as input for the volume model.
+    """
     volume_vol_sensitivity: np.ndarray
+    """
+    Regression coefficient (regressing volume on moving average of volatility).
+    """
     volume_price_change_sensitivity_window: int
+    """
+    The size of the moving average window for the size of price changes, as input for the volume model.
+    """
     volume_price_change_sensitivity: np.ndarray
+    """
+    Regression coefficient (regressing volume on moving average of absolute value of (logarithmic) returns).
+    """
     volume_noise_std: np.ndarray
+    """
+    Standard deviation for the noise (normally distributed) that is added to the volume.
+    """
     n: int
+    """
+    Number of timesteps to generate.
+    """
     T: float
+    """
+    Ending time (in days).
+    """
 
     def __post_init__(self) -> None:
         self._date_ids = np.floor(np.linspace(0, self.T * (self.n - 1) / self.n, self.n)).astype(int)
@@ -51,7 +105,7 @@ class HestonProcessMarketSimulator(MarketSimulator):
 
     def reset(self) -> None:
         prices, volumes = self.process_generator.generate_heston_process_with_volume(
-            n_paths=None,
+            n_paths=None, # n_paths is None because it is determined by the size of the covariance matrix
             initial_value=self.initial_value,
             mu=self.mu,
             cov=self.cov,
@@ -68,7 +122,7 @@ class HestonProcessMarketSimulator(MarketSimulator):
             volume_noise_std=self.volume_noise_std,
             n=self.n,
             T=self.T,
-            dt=None,
+            dt=None, # dt is None because it is already determined by n and T
         )
         data = (
                 pd.DataFrame(
