@@ -1,3 +1,4 @@
+from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Tuple
@@ -203,7 +204,7 @@ class StochasticProcesses:
         drift = ((mu - 0.5 * sigma ** 2) * np.linspace(0, T, n).reshape(-1, 1)).T
         increments = self.rng.multivariate_normal(mean=mu, cov=cov, size=n).T
         increments[:, 0] = 0
-        return initial_value * np.exp(drift + sigma.reshape(-1, 1) * increments.cumsum(axis=-1) * math.sqrt(dt))
+        return initial_value.reshape(-1, 1) * np.exp(drift + sigma.reshape(-1, 1) * increments.cumsum(axis=-1) * math.sqrt(dt))
     
     @staticmethod
     @njit

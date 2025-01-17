@@ -97,7 +97,7 @@ class CashAccount(ABC):
             case AccountType.SHORT:
                 self._short_selling_proceeds += amount
 
-    def reset(self, timestep: int | None = None) -> None:
+    def reset(self) -> None:
         """
         Resets the cash account, to be used when resetting the reinforcement learning environment.
 
@@ -106,7 +106,7 @@ class CashAccount(ABC):
         timestep : int | None, optional
             The timestep at which to start.
         """
-        self._t = timestep or 0
+        self._t = 0
         self._current_capital = self.initial_capital
         self._current_margin_balance = 0
         self._short_selling_proceeds = 0

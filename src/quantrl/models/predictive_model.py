@@ -31,24 +31,6 @@ class PredictiveModel:
     Size of the buffer that is used to calculate model performance across a rolling window.
     """
 
-    @abstractmethod
-    def prepare_training_data(self, market: qrl.Market) -> pl.DataFrame:
-        """
-        Prepares the training data that is used to update the model at each timestep.
-        Take care to not introduce data leakage!
-
-        Parameters
-        ----------
-        market : qrl.Market
-            Market object from which the training data is derived.
-
-        Returns
-        -------
-        pl.DataFrame
-            The dataframe with training data. Should contain the columns 'timestep_id', 'symbol_id' and 'label'.
-        """
-        pass
-
     def __post_init__(self) -> None:
         assert isinstance(self.model, (Classifier, Regressor))
         assert self.labels.min() == 0
@@ -81,7 +63,25 @@ class PredictiveModel:
         self._t: int | None = None
         self._buffer_filled: bool | None = None
     
-    def reset(self, timestep: int | None = None) -> None:
+    @abstractmethod
+    def prepare_training_data(self, market: qrl.Market) -> pl.DataFrame:
+        """
+        Prepares the training data that is used to update the model at each timestep.
+        Take care to not introduce data leakage!
+
+        Parameters
+        ----------
+        market : qrl.Market
+            Market object from which the training data is derived.
+
+        Returns
+        -------
+        pl.DataFrame
+            The dataframe with training data. Should contain the columns 'timestep_id', 'symbol_id' and 'label'.
+        """
+        pass
+
+    def reset(self) -> None:
         """
         Reset the model, to be used when resetting the reinforcement learning environment.
 
@@ -91,7 +91,7 @@ class PredictiveModel:
             Initialise the model to start at the provided timestep. E.g. if the inputs contain n lagged values
             from historical data, then timestep = n will be necessary.
         """
-        self._t = timestep or 0
+        self._t = 0
         self._ptr = 0
         if not self.share_model:
             self._model = {

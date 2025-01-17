@@ -3,7 +3,7 @@ import gymnasium as gym
 import polars as pl
 import numpy as np
 from typing import Any, Dict, Iterable, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import quantrl as qrl
 from abc import abstractmethod
 
@@ -80,7 +80,7 @@ class BaseEnv(gym.Env):
         pass
 
     
-
+    @abstractmethod
     def _process_action(self, action: np.ndarray[Any, float | int]) -> Iterable[qrl.PositionData]:
         """
         Given the agent's action, specify the positions to be opened.
@@ -97,6 +97,7 @@ class BaseEnv(gym.Env):
         """
         pass
 
+    @abstractmethod
     def closing_positions(self, action: np.ndarray[Any, float | int]) -> pl.Series | None:
         """
         Some logic (possibly based on the agent's chosen action) that specifies which of the
@@ -115,11 +116,12 @@ class BaseEnv(gym.Env):
         pass
 
     def reset(self, *, seed: int | None = None, options: Dict[str, Any] | None = None):
-        self._t = options.get("initial_timestep", 0)
-        self.market.reset(self._t)
-        self.cash_account.reset(self._t)
+        self._t = 0
+        self.market.reset()
+        self.cash_account.reset()
         self.portfolio.reset()
-        self.predictive_model.reset(self._t)
+        self.predictive_model.reset()
+        return self.state, {}
 
 
     def render(self):

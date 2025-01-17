@@ -54,28 +54,21 @@ class Market(ABC):
         
         self._all_symbols = all_market_data.select("symbol_id").unique().to_numpy().flatten()
         self._t: int | None = None
-        self._market_id: int | None = None
+        self.market_id: int | None = None
 
-    def reset(self, timestep: int) -> None:
+    def reset(self) -> None:
         """
         Reset the market, to be used when resetting the reinforcement learning environment.
-
-        Parameters
-        ----------
-        timestep : int
-            Initialise the market to start at the provided timestep. E.g. if the observations contain n lagged values
-            from historical data, then timestep = n will be necessary.
         """
-        self._t = timestep
-        self._market_id = int(self.market_data.filter(pl.col("timestep_id") == self._t).select("market_id").max().item())
+        self._t = 0
+        self.market_id = int(self.market_data.filter(pl.col("timestep_id") == self._t).select("market_id").max().item())
 
-    @abstractmethod
     def step(self) -> None:
         """
         Evolve the market by one timestep, to be used when the reinforcement learning environment takes a step.
         """
         self._t += 1
-        self._market_id = int(self.market_data.filter(pl.col("timestep_id") == self._t).select("market_id").max().item())
+        self.market_id = int(self.market_data.filter(pl.col("timestep_id") == self._t).select("market_id").max().item())
 
     def get_all_data(
         self, 
@@ -136,7 +129,7 @@ class Market(ABC):
         """
         if stride is None:
             stride = 1
-        assert self._market_id - stride * lags >= 0
+        assert self.market_id - stride * lags >= 0
         if symbol_id is None:
             symbol_id = self._all_symbols.tolist()
         elif isinstance(symbol_id, int):
@@ -150,7 +143,7 @@ class Market(ABC):
                 & pl.col("market_id").is_in(
                     list(
                         reversed(
-                            range(self._market_id, self._market_id - stride * lags - 1, -stride)
+                            range(self.market_id, self.market_id - stride * lags - 1, -stride)
                         )
                     )
                 )
@@ -159,7 +152,6 @@ class Market(ABC):
         )
         return data.select(pl.all() if columns is None else columns)
 
-    @abstractmethod
     def get_prices(
         self,
         symbol_id: int | np.ndarray[Any, int] | None = None,
@@ -218,13 +210,14 @@ class SimulatedMarket(Market):
     market_simulator: MarketSimulator
 
     def __post_init__(self):
-        super().__post_init__()
         self._market_data = self.market_simulator.reset()
+        super().__post_init__()
+        
 
     @property
     def market_data(self) -> pl.DataFrame:
         return self._market_data
 
-    def reset(self, timestep):
+    def reset(self):
         self._market_data = self.market_simulator.reset()
-        return super().reset(timestep)
+        return super().reset()

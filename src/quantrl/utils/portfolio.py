@@ -1,7 +1,7 @@
 from __future__ import annotations
 import numpy as np
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import quantrl as qrl
 import polars as pl
 from enum import Enum
@@ -21,9 +21,10 @@ portfolio_schema = {
     "maturity": pl.Int16,
     "time_remaining": pl.Int16,
     "margin_percent": pl.Float64,
+    "market_id": pl.Int16,
 }
 
-@dataclass
+@dataclass(kw_only=True)
 class PositionData:
     symbol_id: int
     """
@@ -52,6 +53,10 @@ class PositionData:
     margin_percent: float | None
     """
     In case of shortselling, specifies the required margin.
+    """
+    market_id: int
+    """
+    The market_id at which the position was entered.
     """
 
 class Portfolio(ABC): 
@@ -105,6 +110,7 @@ class Portfolio(ABC):
                     "maturity": position.maturity,
                     "time_remaining": position.maturity,
                     "margin_percent": position.margin_percent,
+                    "market_id": position.market_id,
                 },
                 schema=portfolio_schema
             )
