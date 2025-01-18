@@ -19,7 +19,6 @@ portfolio_schema = {
     "strike_price": pl.Float64,
     "contract_id": pl.Int8,
     "maturity": pl.Int16,
-    "time_remaining": pl.Int16,
     "margin_percent": pl.Float64,
     "market_id": pl.Int16,
 }
@@ -64,6 +63,7 @@ class Portfolio(ABC):
         self.open_positions = pl.DataFrame(
             schema=portfolio_schema
         )
+        self._position_id: int | None = None
 
     def reset(self) -> None:
         """
@@ -71,7 +71,8 @@ class Portfolio(ABC):
         """
         self.open_positions = pl.DataFrame(
             schema=portfolio_schema
-        )        
+        )
+        self._position_id = 0 
 
     def open_position(
         self,
@@ -102,64 +103,53 @@ class Portfolio(ABC):
         self.open_positions.extend(
             pl.DataFrame(
                 {
+                    "position_id": self._position_id,
                     "symbol_id": position.symbol_id,
                     "position": position.position,
                     "entry_price": position.entry_price,
                     "strike_price": position.strike_price,
                     "contract_id": position.contract_type.value,
                     "maturity": position.maturity,
-                    "time_remaining": position.maturity,
                     "margin_percent": position.margin_percent,
                     "market_id": position.market_id,
                 },
                 schema=portfolio_schema
             )
         )
-
-    def step(self) -> None:
-        """
-        Evolve the portfolio by one timestep, to be used when the reinforcement learning environment takes a step.
-        """
-        self.open_positions._replace("time_remaining", self.open_positions.select("time_remaining").to_series() - 1)
+        self._position_id += 1
 
     def close_positions(
         self,
-        market: qrl.Market,
+        closing_positions: pl.DataFrame | None,
         cash_account: qrl.CashAccount,
-        *,
-        closing_mask: pl.Series | None = None,
     ) -> None:
         """
         Close the specified positions.
 
         Parameters
         ----------
-        market : qrl.Market
-            Market object that can be used to derive closing criteria.
+        closing_positions : pl.DataFrame
+            Dataframe with the columns `position_id` and `closing_price`, specifying which positions to close and
+            at what price.
         cash_account : qrl.CashAccount
             Cash account which manages funding.
-        closing_mask : pl.Series | None, optional
-            Boolean mask that specifies which positions to close, by default None. If None, use self.closing_positions.
         """
-        if len(self.open_positions) == 0:
+        if len(self.open_positions) == 0 or len(closing_positions) == 0 or closing_positions is None:
             return
         else:
-            # Determine which positions will be closed
-            closing_mask = self.closing_mask(market) if closing_mask is None else closing_mask
-            closing_positions = self.open_positions.filter(closing_mask)
+            assert "position_id" in closing_positions.columns and "closing_price" in closing_positions.columns
+            # Get the data from the closing positions
+            closing_positions = closing_positions.join(self.open_positions, on="position_id", how="left")
             
             # All long positions are closed by simply selling the assets
             closing_long_positions = closing_positions.filter(pl.col("position") >= 0)
-            closing_long_value = value_portfolio(closing_long_positions, market, contract_type=None)
+            closing_long_value = value_portfolio(closing_long_positions, contract_type=None)
             cash_account.deposit(closing_long_value, account=qrl.AccountType.CASH)
             
             # Short positions are closed by buying back the asset with cash from the margin
             # account. The remainder is the P&L which is added back into the cash account.
-            closing_short_positions = (
-                closing_positions
-                .filter(pl.col("position") < 0)
-                .join(market.get_prices(side=qrl.OrderType.BUY), on="symbol_id")
-            )
+            closing_short_positions = closing_positions.filter(pl.col("position") < 0)
+
             # TODO: Maybe make margin_percent update each step based on current price, to accomodate margin calls.
             # Current setup only works if no additional margin needs to be deposited.
             closing_margin_account_balance = (
@@ -167,29 +157,12 @@ class Portfolio(ABC):
                 * closing_short_positions.select("entry_price").to_series()
                 * (closing_short_positions.select("margin_percent").to_series() + 1)
             ).sum()
-            closing_short_asset_buyback_value = -value_portfolio(closing_short_positions, market, contract_type=None)
+            closing_short_asset_buyback_value = -value_portfolio(closing_short_positions, contract_type=None)
             pnl_plus_margin = closing_margin_account_balance - closing_short_asset_buyback_value
             cash_account.withdraw(closing_margin_account_balance, account=qrl.AccountType.MARGIN)
             cash_account.deposit(pnl_plus_margin, account=qrl.AccountType.CASH)
 
-            self.open_positions = self.open_positions.filter(~closing_mask)
-
-    @abstractmethod
-    def closing_mask(self, market: qrl.Market) -> pl.Series:
-        """
-        Determines which positions to close, possibly based on market data.
-
-        Parameters
-        ----------
-        market : qrl.Market
-            Market object from which to derive closing conditions.
-
-        Returns
-        -------
-        pl.Series
-            Boolean mask that specifies which conditions to close.
-        """
-        pass
+            self.open_positions = self.open_positions.filter(~pl.col("position_id").is_in(closing_positions.select("position_id")))
 
     @abstractmethod
     def summarise_positions(self, market: qrl.Market) -> np.ndarray[Any, float]:
@@ -226,29 +199,25 @@ class Portfolio(ABC):
 
 def value_portfolio(
     portfolio: pl.DataFrame, 
-    market: qrl.Market,
     contract_type: ContractType | None = None,
-    apply_bid_ask_spread: bool = True,
 ) -> float:
     """
-    Calculate the value of the portfolio in the given market.
+    Calculate the value of the portfolio given the current market prices.
 
     Parameters
     ----------
     portfolio : pl.DataFrame
-        Portfolio object to be valuated.
-    market : qrl.Market
-        Market object to be used for deriving the portfolio value.
+        Portfolio object to be valuated. Should contain the columns `closing_price` in addition to the 
+        standard portfolio dataframe columns (see qrl.utils.portfolio.portfolio_schema).
     contract_type : Literal[&quot;SPOT&quot;, &quot;FUTURE&quot;, &quot;OPTION&quot;] | None, optional
         The contract type contained in the portfolio. If None, assumes mixed contract type.
-    apply_bid_ask_spread : bool, optional
-        Whether to apply the bid ask spread for valuation, by default True.
 
     Returns
     -------
     float
         The value of the portfolio.
     """
+    assert "closing_price" in portfolio.columns
     if len(portfolio) == 0:
         return 0
     if contract_type is None:
@@ -257,24 +226,17 @@ def value_portfolio(
             [
                 value_portfolio(
                     portfolio.filter(pl.col("contract_id") == contract_id),
-                    market,
                     contract_type=ContractType(contract_id)
                 )
                 for contract_id in contract_ids
             ]
         )
     else:
-        buy_prices = market.get_prices(side=qrl.OrderType.BUY if apply_bid_ask_spread else None).rename({"price": "buy_price"})
-        sell_prices = market.get_prices(side=qrl.OrderType.SELL if apply_bid_ask_spread else None).rename({"price": "sell_price"})
-    
-        portfolio = (
-            portfolio.join(buy_prices, on="symbol_id").join(sell_prices, on="symbol_id")
-        ).with_columns(pl.when(pl.col("position") < 0).then(pl.col("buy_price")).otherwise(pl.col("sell_price")).alias("price"))
         match contract_type:
             case ContractType.SPOT:
                 return (
                     portfolio.select("position").to_series()
-                    * portfolio.select("price").to_series()
+                    * portfolio.select("closing_price").to_series()
                 ).sum()
             case ContractType.FUTURE:
                 # TODO: Implement valuation for futures contract
@@ -282,45 +244,3 @@ def value_portfolio(
             case ContractType.OPTION:
                 # TODO: Implement valuation for options contract
                 raise NotImplementedError()
-
-class TripleBarrierPortfolio(Portfolio):
-    def __init__(self, model: qrl.TripleBarrierClassifier):
-        super().__init__()
-        self.model = model
-
-    # TODO: add Greeks/risk metrics to position summary
-    def summarise_positions(self, market: qrl.Market):
-        return np.array(
-            [
-                value_portfolio(self.open_positions, market, None, True)
-            ]
-        )
-
-    @property
-    def summary_shape(self) -> Tuple[int, ...]:
-        return (1,)
-
-    def closing_mask(self, market: qrl.Market) -> pl.Series:
-        buy_prices = market.get_prices(side=qrl.OrderType.BUY).rename({"price": "buy_price"})
-        sell_prices = market.get_prices(side=qrl.OrderType.SELL).rename({"price": "sell_price"})
-    
-        portfolio = (
-            self.open_positions.join(buy_prices, on="symbol_id").join(sell_prices, on="symbol_id")
-        ).with_columns(pl.when(pl.col("position") < 0).then(pl.col("buy_price")).otherwise(pl.col("sell_price")).alias("price"))
-        portfolio = portfolio.with_columns(
-            pl.when(
-                pl.col("contract_id") == ContractType.SPOT.value
-            ).then(
-                (pl.col("price") / pl.col("entry_price") - 1) 
-                * pl.when(pl.col("position") >= 0).then(pl.lit(1.0)).otherwise(pl.lit(-1.0))
-            ).when(
-                pl.col("contract_id") == ContractType.FUTURE.value
-            ).then(
-                None
-            ).when(
-                pl.col("contract_id") == ContractType.OPTION.value
-            ).then(
-                None
-            ).alias("pnl")
-        )
-        return (portfolio.select("pnl").to_series() > self.model.take_profit) | (portfolio.select("pnl").to_series() < self.model.stop_loss)
