@@ -176,12 +176,18 @@ class Portfolio(ABC):
                 -closing_short_positions.select("position").to_series()
                 * closing_short_positions.select("entry_price").to_series()
             ).sum()
+            margin_balance = cash_account.current_balance(qrl.AccountType.MARGIN)
+            if margin_balance < closing_margin_value:
+                closing_margin_value = margin_balance
+            short_sale_balance = cash_account.current_balance(qrl.AccountType.SHORT)
+            if short_sale_balance < closing_short_asset_entry_value:
+                closing_short_asset_entry_value = short_sale_balance
             cash_account.withdraw(closing_margin_value, account=qrl.AccountType.MARGIN)
             cash_account.withdraw(closing_short_asset_entry_value, account=qrl.AccountType.SHORT)
             cash_account.deposit(
                 closing_margin_value
-                - closing_short_asset_current_value
-                + closing_short_asset_entry_value,
+                + closing_short_asset_entry_value
+                - closing_short_asset_current_value,
                 account=qrl.AccountType.CASH
             )
 

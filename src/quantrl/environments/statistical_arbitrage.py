@@ -120,7 +120,7 @@ class StatArbEnv(qrl.BaseEnv):
         buy_prices = price = self.market.get_prices(side=qrl.OrderType.BUY)
         sell_prices = self.market.get_prices(side=qrl.OrderType.SELL)
         cash_distribution = (
-            self.cash_account.current_balance(qrl.AccountType.CASH)
+            max(self.cash_account.current_balance(qrl.AccountType.CASH) - 1e-8, 0)
             * np.abs(action) / max(np.abs(action).sum(), 1e-8)
             * np.sign(action)
         )

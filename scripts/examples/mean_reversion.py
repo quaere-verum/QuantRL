@@ -189,7 +189,7 @@ if __name__ == "__main__":
     #         plt.scatter(data.dropna()[(symbol_id, "timestep_id")].index, data.dropna()[(symbol_id, "midprice")])
     #     plt.grid()
     #     plt.show()
-    cash_account = qrl.ConstantInflowCashAccount(100, 1, 10)
+    cash_account = qrl.ConstantInflowCashAccount(100, 1, 0)
     portfolio = PairsTradingPortfolio(0.1, -0.15)
     predictive_model = DummyModel(
         model=DummyClassifier(),
@@ -216,5 +216,6 @@ if __name__ == "__main__":
         done, truncated = False, False
         obs, info = env.reset()
         while not done and not truncated:
-            obs, reward, done, truncated, _ = env.step(np.array([0.0, 0.0]))
+            action = np.array([-0.1, 0.0]) if obs["cash_account"][0] > 0 else np.array([0.0, 0.0])
+            obs, reward, done, truncated, _ = env.step(action)
             print(obs)
