@@ -129,7 +129,7 @@ class Market(ABC):
         """
         if stride is None:
             stride = 1
-        assert self.market_id - stride * lags >= 0
+        assert self.market_id - stride * lags + 1 >= 0
         if symbol_id is None:
             symbol_id = self._all_symbols.tolist()
         elif isinstance(symbol_id, int):

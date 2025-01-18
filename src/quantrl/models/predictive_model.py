@@ -164,7 +164,10 @@ class PredictiveModel:
             if return_distribution:
                 return distribution / distribution.sum()
             else:
-                return distribution.argmax().item()
+                if np.all(np.isnan(distribution)):
+                    return np.nan
+                else:
+                    return distribution.argmax().item()
     
     @property
     @abstractmethod

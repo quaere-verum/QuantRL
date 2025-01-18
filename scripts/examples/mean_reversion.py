@@ -8,24 +8,20 @@ from river.base import Classifier
 
 @dataclass
 class PairsTradingMarketSimulator(qrl.MarketSimulator):
+    estimated_spread_sigma: float
+    z_score_for_action: float
+    lookback_window: int
     generator: qrl.StochasticProcesses
-    cov: np.ndarray
-    sigma: np.ndarray
+    sigma: float
     theta: float
     sigma_spread: float
     n: int
     T: float
-    obs_interval: int
 
     def __post_init__(self):
-        assert self.cov.shape == (2, 2)
-        assert self.sigma.shape == (2,)
         self._date_ids = np.floor(np.linspace(0, self.T * (self.n - 1) / self.n, self.n)).astype(int)
         self._time_ids = np.arange(self.n) % int(np.floor(self.n / self.T))
         self._market_ids = np.arange(self.n)
-        _timestep_ids = np.full(self.n, -1)
-        _timestep_ids[np.arange(self.obs_interval, self.n, self.obs_interval)] = np.arange(self.n // self.obs_interval - 1)
-        self._timestep_ids = _timestep_ids
         self._schema = {
             "timestep_id": pl.Int32,
             "market_id": pl.Int32,
@@ -36,12 +32,13 @@ class PairsTradingMarketSimulator(qrl.MarketSimulator):
         }
 
     def reset(self):
-        asset_prices = self.generator.generate_geometric_brownian_motion(
-            n_paths=None,
-            initial_value=np.array([1.0, 1.0]),
-            mu=np.array([0.0, 0.0]),
-            cov=self.cov,
-            sigma=self.sigma,
+        asset_prices = np.zeros((2, self.n))
+        asset_prices[0, :] = self.generator.generate_geometric_brownian_motion(
+            n_paths=1,
+            initial_value=1.0,
+            mu=0.0,
+            cov=None,
+            sigma=float(self.sigma),
             n=self.n,
             T=self.T,
             dt=None
@@ -57,11 +54,17 @@ class PairsTradingMarketSimulator(qrl.MarketSimulator):
             T=self.T,
             dt=None
         )
-        asset_prices[1, :] += spread.flatten()
+        asset_prices[1, :] = asset_prices[0, :] + spread.flatten()
+        
+        z_score_threshold = np.abs(spread / self.estimated_spread_sigma) > self.z_score_for_action
+        action_times = np.flatnonzero(z_score_threshold)
+        action_times = action_times[action_times >= self.lookback_window - 1]
+        timestep_ids = np.full(self.n, -1, dtype=int)
+        timestep_ids[action_times] = np.arange(len(action_times))
         data = (
             pd.DataFrame(
                 columns=pd.MultiIndex.from_product((["midprice"], np.arange(len(asset_prices))), names=["midprice", "symbol_id"]),
-                index=pd.MultiIndex.from_arrays((self._timestep_ids, self._market_ids, self._date_ids, self._time_ids), names=["timestep_id", "market_id", "date_id", "time_id"]),
+                index=pd.MultiIndex.from_arrays((timestep_ids, self._market_ids, self._date_ids, self._time_ids), names=["timestep_id", "market_id", "date_id", "time_id"]),
                 data=asset_prices.T
             )
             .stack(future_stack=True)
@@ -121,41 +124,33 @@ class PairsTradingPortfolio(qrl.Portfolio):
         )
         return (portfolio.select("pnl").to_series() > self.take_profit) | (portfolio.select("pnl").to_series() < self.stop_loss)
 
-@dataclass
-class PairsTradingClassifier(Classifier):
-    spread_std_estimate: float
-    z_score: float
+class DummyClassifier(Classifier):
 
     def learn_one(self, X: dict[str, float], y: int) -> None:
         pass
     
     def predict_one(self, X: dict[str, float], **kwargs) -> int:
-        return 1 if abs(X["spread"] / self.spread_std_estimate) > self.z_score else 0
+        return np.nan
     
     def predict_proba_one(self, X: dict[str, float]) -> dict[str, int]:
-        if abs(X["spread"] / self.spread_std_estimate) > self.z_score:
-            return {0: 0.0, 1: 1.0}
-        else:
-            return {0: 1.0, 1: 0.0}
+        return {0: np.nan, 1: np.nan}
 
 
-class PairsTradingModel(qrl.PredictiveModel):
+class DummyModel(qrl.PredictiveModel):
 
     @property
     def performance(self) -> float:
-        return 0.0 
+        return np.nan 
     
     def market_to_features(self, market: qrl.Market, symbol_id: int) -> dict[str, float]:
-        prices = market.get_prices()
-        return {"spread": np.diff(prices.select("price").to_numpy().flatten()).item()}
-    
+        return {}
     def prepare_training_data(self, market):
         return pl.DataFrame(
             {
-                "market_id": [-1, -1],
-                "timestep_id": [-1, -1],
-                "symbol_id": [0, 1],
-                "label": [0, 0],
+                "market_id": [-1],
+                "timestep_id": [-1],
+                "symbol_id": [0],
+                "label": [0],
             },
             schema={
                 "market_id": pl.Int16,
@@ -169,30 +164,35 @@ class PairsTradingModel(qrl.PredictiveModel):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     market_simulator = PairsTradingMarketSimulator(
+        estimated_spread_sigma=0.05,
+        z_score_for_action=1.0,
+        lookback_window=5,
         generator=qrl.StochasticProcesses(1),
-        cov=np.array([[1.0, 0.25], [0.25, 1.0]]),
-        sigma=np.array([0.05, 0.06]),
-        theta=5.0,
-        sigma_spread=0.05,
+        sigma=0.05,
+        theta=4.0,
+        sigma_spread=0.1,
         n=300,
         T=5,
-        obs_interval=15,
     )
     market = qrl.SimulatedMarket(bid_ask_spread=3, market_simulator=market_simulator)
-    for _ in range(10):
-        data = market_simulator.reset().to_pandas().pivot(index="market_id", columns="symbol_id", values=["midprice", "timestep_id"])
-        print(np.std(data["midprice"].values[:, 0] - data["midprice"].values[:, 1]))
-        data = data.swaplevel(axis=1)
-        symbols = data.columns.get_level_values(0).unique().to_numpy()
-        for k, symbol_id in enumerate(symbols):
-            plt.plot(data[(symbol_id, "midprice")], alpha=0.5)
-            plt.scatter(data.dropna()[(symbol_id, "timestep_id")].index, data.dropna()[(symbol_id, "midprice")])
-        plt.grid()
-        plt.show()
+    # for _ in range(10):
+    #     data = market_simulator.reset().to_pandas().pivot(index="market_id", columns="symbol_id", values=["midprice", "timestep_id"])
+    #     spread = np.diff(data["midprice"].values, axis=1)
+    #     plt.plot(spread)
+    #     plt.axhline(market_simulator.estimated_spread_sigma, c="black")
+    #     plt.axhline(-market_simulator.estimated_spread_sigma, c="black")
+    #     plt.show()
+    #     data = data.swaplevel(axis=1)
+    #     symbols = data.columns.get_level_values(0).unique().to_numpy()
+    #     for k, symbol_id in enumerate(symbols):
+    #         plt.plot(data[(symbol_id, "midprice")], alpha=0.5)
+    #         plt.scatter(data.dropna()[(symbol_id, "timestep_id")].index, data.dropna()[(symbol_id, "midprice")])
+    #     plt.grid()
+    #     plt.show()
     cash_account = qrl.ConstantInflowCashAccount(100, 1, 10)
     portfolio = PairsTradingPortfolio(0.1, -0.15)
-    predictive_model = PairsTradingModel(
-        model=PairsTradingClassifier(0.05, 1.5),
+    predictive_model = DummyModel(
+        model=DummyClassifier(),
         market=market,
         labels=np.array([0, 1]),
         share_model=True,
@@ -203,7 +203,7 @@ if __name__ == "__main__":
         cash_account=cash_account,
         portfolio=portfolio,
         predictive_model=predictive_model,
-        lags=15,
+        lags=0,
         stride=1,
         market_observation_columns=["midprice"],
         episode_length=9,
@@ -212,8 +212,9 @@ if __name__ == "__main__":
         horizon=None,
         margin_percent=0.2,
     )
-    done, truncated = False, False
-    obs, info = env.reset()
-    while not done and not truncated:
-        obs, reward, done, truncated, _ = env.step(np.array([0.0, 0.0]))
-        print(obs)
+    for _ in range(10):
+        done, truncated = False, False
+        obs, info = env.reset()
+        while not done and not truncated:
+            obs, reward, done, truncated, _ = env.step(np.array([0.0, 0.0]))
+            print(obs)
