@@ -98,7 +98,7 @@ class BaseEnv(gym.Env):
         pass
 
     @abstractmethod
-    def closing_positions(self, action: np.ndarray[Any, float | int]) -> pl.Series | None:
+    def closing_positions(self, action: np.ndarray[Any, float | int]) -> pl.DataFrame | None:
         """
         Some logic (possibly based on the agent's chosen action) that specifies which of the
         open positions in self.portfolio.open_positions to close.
@@ -110,8 +110,9 @@ class BaseEnv(gym.Env):
 
         Returns
         -------
-        pl.Series | None
-            Polars series containing booleans, of the same length as self.portfolio.open_positions. If true, the corresponding position will be closed.
+        pl.DataFrame | None
+            Polars dataframe containing the columns `order_id`, specifying the order_ids to be closed,
+            and `closing_price` specifying the price at which the order will be closed.
         """
         pass
 

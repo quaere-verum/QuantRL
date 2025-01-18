@@ -13,6 +13,7 @@ class ContractType(Enum):
     OPTION = 3
 
 portfolio_schema = {
+    "position_id": pl.Int16,
     "symbol_id": pl.Int16,
     "position": pl.Float64,
     "entry_price": pl.Float64,
@@ -64,15 +65,28 @@ class Portfolio(ABC):
             schema=portfolio_schema
         )
         self._position_id: int | None = None
+        self._historical_values: dict | None = None
+        self._t: int | None = None
 
     def reset(self) -> None:
         """
         Reset the portfolio, to be used when resetting the reinforcement learning environment.
         """
+        self._t = 0
         self.open_positions = pl.DataFrame(
             schema=portfolio_schema
         )
-        self._position_id = 0 
+        self._position_id = 0
+        self._historical_values = {0: 0.0}
+
+    def step(self) -> None:
+        self._t += 1
+
+    def get_value(self, timestep_id: int) -> float:
+        return self._historical_values.get(timestep_id, None)
+    
+    def set_value(self, timestep_id: int, value: float) -> None:
+        self._historical_values[timestep_id] = value
 
     def open_position(
         self,
@@ -157,6 +171,8 @@ class Portfolio(ABC):
                 * closing_short_positions.select("entry_price").to_series()
                 * (closing_short_positions.select("margin_percent").to_series() + 1)
             ).sum()
+            if np.isclose(closing_margin_account_balance, cash_account.current_balance(qrl.AccountType.MARGIN)):
+                closing_margin_account_balance = cash_account.current_balance(qrl.AccountType.MARGIN)
             closing_short_asset_buyback_value = -value_portfolio(closing_short_positions, contract_type=None)
             pnl_plus_margin = closing_margin_account_balance - closing_short_asset_buyback_value
             cash_account.withdraw(closing_margin_account_balance, account=qrl.AccountType.MARGIN)

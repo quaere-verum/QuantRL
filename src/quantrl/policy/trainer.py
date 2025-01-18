@@ -97,7 +97,7 @@ class ConditionalResetEnv(gym.Env):
         self.observation_space = env.observation_space
 
     def reset(self, *, seed = None, options = None):
-        if options.get(self.env_id, False):
+        if options is not None and options.get(self.env_id, False):
             return self.env.observation_space.sample(), {}
         else:
             return self.env.reset(seed=seed, options=options)
