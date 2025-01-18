@@ -208,7 +208,7 @@ def value_portfolio(
     ----------
     portfolio : pl.DataFrame
         Portfolio object to be valuated. Should contain the columns `closing_price` in addition to the 
-        standard portfolio dataframe columns (see qrl.utils.portfolio.portfolio_schema).
+        standard portfolio dataframe columns (see `qrl.utils.portfolio.portfolio_schema`).
     contract_type : Literal[&quot;SPOT&quot;, &quot;FUTURE&quot;, &quot;OPTION&quot;] | None, optional
         The contract type contained in the portfolio. If None, assumes mixed contract type.
 

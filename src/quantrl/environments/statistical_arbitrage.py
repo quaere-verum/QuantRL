@@ -46,7 +46,7 @@ class StatArbEnv(qrl.BaseEnv):
         self.predictive_model.step()
 
         self.portfolio.close_positions(
-            closing_positions=self.closing_positions(),
+            closing_positions=self.closing_positions(action),
             cash_account=self.cash_account,
         )
 
