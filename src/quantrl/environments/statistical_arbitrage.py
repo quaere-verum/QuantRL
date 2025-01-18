@@ -1,14 +1,14 @@
 import quantrl as qrl
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import gymnasium as gym
-from typing import Tuple, Dict, Any, Iterable
+from typing import Any, Iterable
 import polars as pl
 
 
 @dataclass
 class StatArbEnv(qrl.BaseEnv):
-    episode_length: int
+    max_episode_length: int
     take_profit: float
     stop_loss: float
     horizon: int | None
@@ -24,10 +24,12 @@ class StatArbEnv(qrl.BaseEnv):
         self.action_space = gym.spaces.Box(
             low=-1, high=1, shape=(len(self._symbol_ids),), dtype=float
         )
+        self._final_timestep_id = self.market.get_all_data().select("timestep_id").to_numpy().max()
 
     def reset(self) -> tuple[dict[str, np.ndarray[float]]]:
+        obs, info = super().reset()
         self._current_portfolio_value = self.cash_account.current_balance(qrl.AccountType.CASH)
-        return super().reset()
+        return obs, info
 
     def step(self, action: np.ndarray[float]) -> tuple[dict[str, np.ndarray[float]], float, bool, bool, dict[str, Any]]:
         self._t += 1
@@ -57,13 +59,12 @@ class StatArbEnv(qrl.BaseEnv):
                 apply_bid_ask_spread=True,
             ) 
             + self.cash_account.current_balance(qrl.AccountType.CASH)
-            + self.cash_account.current_balance(qrl.AccountType.SHORT)
             + self.cash_account.current_balance(qrl.AccountType.MARGIN)
         )
         return self.state, self.reward, self.done, self.truncated, self.info
     
     @property
-    def state(self) -> Dict[str, np.ndarray[Any, float]]:
+    def state(self) -> dict[str, np.ndarray[Any, float]]:
         market_data_pivot: pl.DataFrame = self.market.get_current_data(
             self.lags, 
             self.stride, 
@@ -75,7 +76,6 @@ class StatArbEnv(qrl.BaseEnv):
             "cash_account": np.array(
                 [
                     self.cash_account.current_balance(qrl.AccountType.CASH),
-                    self.cash_account.current_balance(qrl.AccountType.SHORT),
                     self.cash_account.current_balance(qrl.AccountType.MARGIN),
                 ]
             ),
@@ -97,7 +97,7 @@ class StatArbEnv(qrl.BaseEnv):
     def done(self) -> bool:
         return (
             True
-            if self._t >= self.episode_length
+            if self._t >= min(self.max_episode_length, self._final_timestep_id)
             else False
         )
 
@@ -111,7 +111,7 @@ class StatArbEnv(qrl.BaseEnv):
         
 
     @property
-    def info(self) -> Dict[str, Any]:
+    def info(self) -> dict[str, Any]:
         return dict()
     
 

@@ -8,9 +8,7 @@ class FundsError(Exception):
 class AccountType(Enum):
     CASH = 1
     MARGIN = 2
-    SHORT = 3
 
-# TODO: Add logic for margin account
 @dataclass
 class CashAccount(ABC):
     initial_capital: float
@@ -20,9 +18,8 @@ class CashAccount(ABC):
 
     def __post_init__(self) -> None:
         self._t: int | None = None
-        self._current_capital = self.initial_capital
+        self._current_capital: float | None = None
         self._current_margin_balance: float | None = None
-        self._short_selling_proceeds: float | None = None
 
     @property
     @abstractmethod
@@ -44,8 +41,6 @@ class CashAccount(ABC):
                 return self._current_capital
             case AccountType.MARGIN:
                 return self._current_margin_balance
-            case AccountType.SHORT:
-                return self._short_selling_proceeds
 
     def withdraw(self, amount: float, account: AccountType):
         """
@@ -73,11 +68,6 @@ class CashAccount(ABC):
                     raise FundsError("Cannot go below 0 margin account balance.")
                 else:
                     self._current_margin_balance -= amount
-            case AccountType.SHORT:
-                if amount > self._short_selling_proceeds:
-                    raise FundsError("Cannot go below 0 short selling proceeds.")
-                else:
-                    self._short_selling_proceeds -= amount
         
     def deposit(self, amount: float, account: AccountType):
         """
@@ -94,8 +84,6 @@ class CashAccount(ABC):
                 self._current_capital += amount
             case AccountType.MARGIN:
                 self._current_margin_balance += amount
-            case AccountType.SHORT:
-                self._short_selling_proceeds += amount
 
     def reset(self) -> None:
         """
@@ -118,7 +106,7 @@ class CashAccount(ABC):
         """
         pass
 
-    def margin_call(self, required_margin: float) -> bool:
+    def margin_call(self, required_margin: float) -> None:
         """
         Adjust funds to meet the margin call. Returns True or False based
         on whether or not the margin call was able to be met.
@@ -128,21 +116,12 @@ class CashAccount(ABC):
         required_margin : float
             The required amount in the margin account.
 
-        Returns
-        -------
-        bool
-            Whether or not it was possible to meet the margin call.
         """
         # TODO: Include collateral from portfolio in margin calculation
         if self._current_margin_balance < required_margin:
             additional_margin = required_margin - self._current_margin_balance
-            try:
-                self.withdraw(additional_margin, account=AccountType.CASH)
-            except FundsError:
-                return False
-            else:
-                self.deposit(additional_margin, account=AccountType.MARGIN)
-                return True
+            self.withdraw(additional_margin, account=AccountType.CASH)
+            self.deposit(additional_margin, account=AccountType.MARGIN)
 
 
 

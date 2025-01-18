@@ -94,10 +94,10 @@ class Portfolio(ABC):
             cash_account.withdraw(position.position * position.entry_price, account=qrl.AccountType.CASH)
         else:
             assert position.margin_percent is not None
-            cash_account.deposit(-position.position * position.entry_price, account=qrl.AccountType.SHORT)
+            proceeds = -position.position * position.entry_price
             margin = -position.position * position.entry_price * position.margin_percent
             cash_account.withdraw(margin, account=qrl.AccountType.CASH)
-            cash_account.deposit(margin, account=qrl.AccountType.MARGIN)
+            cash_account.deposit(margin + proceeds, account=qrl.AccountType.MARGIN)
 
         self.open_positions.extend(
             pl.DataFrame(
@@ -153,12 +153,8 @@ class Portfolio(ABC):
             closing_long_value = value_portfolio(closing_long_positions, market, contract_type=None)
             cash_account.deposit(closing_long_value, account=qrl.AccountType.CASH)
             
-            # Short positions are closed by
-            # 1) Determining the margin for the specified positions
-            # 2) Determining the short sale proceeds for the specified positions
-            # 3) Determining the P&L for the specified positions
-            # The margin and short sale proceeds have to be withdrawn from the corresponding accounts.
-            # Then margin + short sale proceeds + P&L are added to the cash account.
+            # Short positions are closed by buying back the asset with cash from the margin
+            # account. The remainder is the P&L which is added back into the cash account.
             closing_short_positions = (
                 closing_positions
                 .filter(pl.col("position") < 0)
@@ -166,30 +162,15 @@ class Portfolio(ABC):
             )
             # TODO: Maybe make margin_percent update each step based on current price, to accomodate margin calls.
             # Current setup only works if no additional margin needs to be deposited.
-            closing_margin_value = (
+            closing_margin_account_balance = (
                 -closing_short_positions.select("position").to_series()
                 * closing_short_positions.select("entry_price").to_series()
-                * closing_short_positions.select("margin_percent").to_series()
+                * (closing_short_positions.select("margin_percent").to_series() + 1)
             ).sum()
-            closing_short_asset_current_value = -value_portfolio(closing_short_positions, market, contract_type=None)
-            closing_short_asset_entry_value = (
-                -closing_short_positions.select("position").to_series()
-                * closing_short_positions.select("entry_price").to_series()
-            ).sum()
-            margin_balance = cash_account.current_balance(qrl.AccountType.MARGIN)
-            if margin_balance < closing_margin_value:
-                closing_margin_value = margin_balance
-            short_sale_balance = cash_account.current_balance(qrl.AccountType.SHORT)
-            if short_sale_balance < closing_short_asset_entry_value:
-                closing_short_asset_entry_value = short_sale_balance
-            cash_account.withdraw(closing_margin_value, account=qrl.AccountType.MARGIN)
-            cash_account.withdraw(closing_short_asset_entry_value, account=qrl.AccountType.SHORT)
-            cash_account.deposit(
-                closing_margin_value
-                + closing_short_asset_entry_value
-                - closing_short_asset_current_value,
-                account=qrl.AccountType.CASH
-            )
+            closing_short_asset_buyback_value = -value_portfolio(closing_short_positions, market, contract_type=None)
+            pnl_plus_margin = closing_margin_account_balance - closing_short_asset_buyback_value
+            cash_account.withdraw(closing_margin_account_balance, account=qrl.AccountType.MARGIN)
+            cash_account.deposit(pnl_plus_margin, account=qrl.AccountType.CASH)
 
             self.open_positions = self.open_positions.filter(~closing_mask)
 
