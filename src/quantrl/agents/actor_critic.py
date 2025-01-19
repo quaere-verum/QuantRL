@@ -5,13 +5,24 @@ import numpy as np
 from typing import Tuple
 
 class ActorContinuous(torch.nn.Module):
-    def __init__(self, preprocessing_net: PreprocessingNet, action_dim: int, stochastic: bool = True):
+    def __init__(
+        self, 
+        preprocessing_net: PreprocessingNet, 
+        action_dim: int, 
+        stochastic: bool = True,
+        scale_action: bool = True,
+    ):
         super().__init__()
         self.action_dim = action_dim
         self.stochastic = stochastic
-        self._actor = torch.nn.Sequential(
+        layers = [
             preprocessing_net,
             torch.nn.Linear(preprocessing_net.output_dim, (1 + self.stochastic) * action_dim),
+        ]
+        if scale_action:
+            layers.append(torch.nn.Tanh())
+        self._actor = torch.nn.Sequential(
+            *layers
         )
 
     def act(self, state: torch.Tensor | np.ndarray, evaluation: bool = False) -> torch.Tensor:

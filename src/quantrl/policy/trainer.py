@@ -3,11 +3,9 @@ from quantrl.utils.buffer import BaseBuffer
 from dataclasses import dataclass
 import gymnasium as gym
 import numpy as np
-from typing import Tuple
 import warnings
 from tqdm import tqdm
 import logging
-import time
 logging.basicConfig(format="%(asctime)s [%(levelname)s]: %(message)s", datefmt="%I:%M:%S")
 
 @dataclass
@@ -35,6 +33,9 @@ class Trainer:
             self._env = make_vector_env(self.env_name, self.buffer.num_envs)
         self._logger = logging.getLogger()
         self._logger.setLevel(logging.INFO)
+
+    def set_logger_level(self, level) -> None:
+        self._logger.setLevel(level)
 
     def run(self, rounds: int, epochs: int) -> None:
         for round in range(1, rounds + 1):
@@ -69,7 +70,7 @@ class Trainer:
                 states, _ = self._env.reset() if terminal_states else (next_states, None)
             
 
-    def test_policy(self) -> Tuple[float, float]:
+    def test_policy(self) -> tuple[float, float]:
         env = gym.make(self.env_name)
         rewards = np.zeros(self.test_episodes)
         for episode in range(self.test_episodes):
@@ -81,9 +82,15 @@ class Trainer:
                     state,
                     evaluation=True,
                 ).detach().numpy()
+                self._logger.debug(f"Episode: {episode}")
+                self._logger.debug(f"State: {np.array2string(state)}")
+                self._logger.debug(f"Action: {action}")
                 if action.size == 1:
                     action = action.item()
+                else:
+                    action = action[0]
                 state, reward, done, truncated, _ = env.step(action)
+                self._logger.debug(f"Reward: {reward}")
                 total_reward += reward
             rewards[episode] = total_reward
         return np.mean(rewards), np.std(rewards)

@@ -60,7 +60,7 @@ class VMPO(BasePolicy):
             action_dist_new, log_probs_new, state_values = self.actor_critic.forward(states, actions)
             # Critic loss based on GAE or MC returns
             if self.gae_lambda is None:
-                advantages = monte_carlo_returns - state_values
+                advantages = monte_carlo_returns - state_values.detach()
                 critic_loss = torch.pow(monte_carlo_returns - state_values, 2).mean()
             else:
                 advantages = self._gae_advantages(
@@ -75,12 +75,17 @@ class VMPO(BasePolicy):
 
             # KL loss
             if self._discrete:
-                kl_divergence = torch.mean(action_dist_old.detach() * (action_dist_old.log().detach() - action_dist_new.log()), dim=1)
+                # In case of a discrete distribution, the KL divergence is just
+                # \pi_old(a|s)*log(\pi_old(a|s)/\pi_new(a|s))
+                kl_divergence = torch.mean(action_dist_old * (action_dist_old.log() - action_dist_new.log()), dim=1)
             else:
+                # In case of a continuous action distribution, we assume the distribution is parameterised as a Gaussian with mean
+                # mu and variance sigma. Then the KL divergence is computed as
+                # 1/2 * (log(sigma_new ** 2/sigma_old ** 2) - 1 + (mu_old - mu_new) ** 2 / sigma_new ** 2 + sigma_old ** 2 / sigma_new ** 2
                 action_dim = action_dist_old.shape[1] // 2
-                mu_old, sigma_old = action_dist_old[:, :action_dim].detach(), action_dist_old[:, action_dim:].detach() + 1e-8
+                mu_old, sigma_old = action_dist_old[:, :action_dim], action_dist_old[:, action_dim:] + 1e-8
                 mu_new, sigma_new = action_dist_new[:, :action_dim], action_dist_new[:, action_dim:] + 1e-8
-                variance_ratio = torch.pow(sigma_old / sigma_new, 2) 
+                variance_ratio = torch.pow(sigma_old / sigma_new, 2)
                 kl_divergence = torch.mean(
                     (
                         torch.log(1 / variance_ratio)
