@@ -5,4 +5,9 @@ from .environments.statistical_arbitrage import *
 from .models.predictive_model import *
 from .markets.market import *
 from .markets.simulation import *
-from .policy import *
+from .policy.vmpo import *
+from .policy.trainer import Trainer
+from .policy.ppo import *
+from .policy.base import *
+from .agents.actor_critic import *
+from .agents.preprocessing import *

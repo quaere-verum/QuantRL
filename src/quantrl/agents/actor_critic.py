@@ -7,6 +7,7 @@ from typing import Tuple
 class ActorContinuous(torch.nn.Module):
     def __init__(self, preprocessing_net: PreprocessingNet, action_dim: int, stochastic: bool = True):
         super().__init__()
+        self.action_dim = action_dim
         self.stochastic = stochastic
         self._actor = torch.nn.Sequential(
             preprocessing_net,
@@ -17,18 +18,22 @@ class ActorContinuous(torch.nn.Module):
         state = to_torch(state)
         if state.ndim == 1:
             state = state.unsqueeze(0)
-        action_dist_params: torch.Tensor = self._actor(state)
-        action_dim = action_dist_params.shape[1] // 2
+        action_dist_params = self.forward(state)
         if evaluation or not self.stochastic:
-            return action_dist_params[:, :action_dim]
+            return action_dist_params[:, :self.action_dim]
         else:
-            dist = torch.distributions.Normal(action_dist_params[:, :action_dim], action_dist_params[:, action_dim:])
+            dist = torch.distributions.Normal(action_dist_params[:, :self.action_dim], action_dist_params[:, self.action_dim:])
             action = dist.sample()
             
             return action
     
     def forward(self, state: torch.Tensor) -> torch.Tensor:
-        return self._actor(state)
+        action_dist_params = self._actor(state)
+        if self.stochastic:
+            mu = action_dist_params[:, :self.action_dim]
+            sigma = torch.pow(action_dist_params[:, self.action_dim:], 2)
+            action_dist_params = torch.cat((mu, sigma), dim=1)
+        return action_dist_params
     
 class ActorDiscrete(torch.nn.Module):
     def __init__(self, preprocessing_net: PreprocessingNet, nr_actions: int, stochastic: bool = True):
@@ -44,7 +49,7 @@ class ActorDiscrete(torch.nn.Module):
         state = to_torch(state)
         if state.ndim == 1:
             state = state.unsqueeze(0)
-        action_probs: torch.Tensor = self.forward(state)
+        action_probs = self.forward(state)
         if evaluation or not self.stochastic:
             return action_probs.argmax(dim=1)
         else:
@@ -92,18 +97,23 @@ class ActorCritic(torch.nn.Module):
     def forward(self, state: torch.Tensor | np.ndarray, action: torch.Tensor | np.ndarray) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         state = to_torch(state)
         action = to_torch(action)
-        action_prob_params = self.actor(state)
-        
+        action_dist_params = self.actor.forward(state)
+        state_value = self.critic.forward(state, action)
+
         if isinstance(self.actor, ActorDiscrete):
-            dist = torch.distributions.Categorical(action_prob_params)
+            dist = torch.distributions.Categorical(action_dist_params)
             if action.ndim == 2:
                 assert action.shape[1] == 1
                 action = action.squeeze(1)
             action_logprobs = dist.log_prob(action)
             dist_probs = dist.probs
+            return dist_probs, action_logprobs, torch.squeeze(state_value)
         else:
-            raise NotImplementedError()
+            action_dim = action_dist_params.shape[1] // 2
+            mu = action_dist_params[:, :action_dim]
+            sigma = action_dist_params[:, action_dim:]
+            dist = torch.distributions.Normal(mu, sigma)
+            action_logprobs: torch.Tensor = dist.log_prob(action)
+            return action_dist_params, action_logprobs.mean(dim=-1), torch.squeeze(state_value)
         
-        state_value = self.critic.forward(state, action)
         
-        return dist_probs, action_logprobs, torch.squeeze(state_value)
