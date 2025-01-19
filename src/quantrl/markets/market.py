@@ -21,10 +21,10 @@ class Market(ABC):
     def __post_init__(self) -> None:
         all_market_data = self.get_all_data()
         assert np.isin(
-            ["timestep_id", "market_id", "date_id", "time_id", "symbol_id", "midprice"],
+            ["timestep_id", "market_id", "symbol_id", "midprice"],
             all_market_data.columns
         ).all(), (
-            "spot_price dataframe must contain columns with timestep_id, market_id, date_id, time_id, symbol_id"
+            "spot_price dataframe must contain columns with timestep_id, market_id, symbol_id"
         )
         assert (
             all_market_data
@@ -44,11 +44,9 @@ class Market(ABC):
         assert np.all(np.diff(market_id) == 1), "market_id should contain consecutive integer values."
         assert all_market_data.schema["market_id"].is_integer()
         assert all_market_data.schema["timestep_id"].is_integer()
-        assert all_market_data.schema["date_id"].is_integer()
-        assert all_market_data.schema["time_id"].is_integer()
         assert all_market_data.schema["symbol_id"].is_integer()
         for col in all_market_data.columns:
-            if col not in ["timestep_id", "market_id", "date_id", "time_id", "symbol_id"]:
+            if col not in ["timestep_id", "market_id", "symbol_id"]:
                 assert all_market_data.schema[col].is_numeric()
 
         

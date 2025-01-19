@@ -86,7 +86,7 @@ class StatArbEnv(qrl.BaseEnv):
             columns=self.market_observation_columns + ["market_id", "symbol_id"]
         ).pivot(index="market_id", columns="symbol_id", values=self.market_observation_columns)
         return {
-            "market": market_data_pivot.to_numpy(),
+            "market": market_data_pivot.drop("market_id").to_numpy(),
             "portfolio": self.portfolio.summarise_positions(self.market),
             "cash_account": np.array(
                 [

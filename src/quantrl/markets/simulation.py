@@ -92,13 +92,9 @@ class HestonProcessMarketSimulator(MarketSimulator):
     """
 
     def __post_init__(self) -> None:
-        self._date_ids = np.floor(np.linspace(0, self.T * (self.n - 1) / self.n, self.n)).astype(int)
-        self._time_ids = np.arange(self.n) % int(math.floor(self.n / self.T))
         self._market_ids = np.arange(self.n)
         self._schema = {
             "market_id": pl.Int32,
-            "date_id": pl.Int32,
-            "time_id": pl.Int32,
             "symbol_id": pl.Int32,
             "midprice": pl.Float64,
             "volume": pl.Float64,
@@ -128,7 +124,7 @@ class HestonProcessMarketSimulator(MarketSimulator):
         data = (
                 pd.DataFrame(
                 columns=pd.MultiIndex.from_product((np.arange(len(prices)), ("midprice", "volume")), names=["symbol_id", "value"]),
-                index=pd.MultiIndex.from_arrays((self._market_ids, self._date_ids, self._time_ids), names=["market_id", "date_id", "time_id"]),
+                index=pd.Index(self._market_ids, name="market_id"),
                 data=np.concatenate((prices.T, volumes.T), axis=1)
             )
             .swaplevel(axis=1)

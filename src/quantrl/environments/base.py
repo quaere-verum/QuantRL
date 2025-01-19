@@ -3,7 +3,7 @@ import gymnasium as gym
 import polars as pl
 import numpy as np
 from typing import Any, Dict, Iterable, List
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import quantrl as qrl
 from abc import abstractmethod
 
