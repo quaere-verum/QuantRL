@@ -33,7 +33,7 @@ class StatArbEnv(qrl.BaseEnv):
         self._previous_value: float | None = None
         self._current_value: float | None = None
 
-    def reset(self) -> tuple[dict[str, np.ndarray[float]]]:
+    def reset(self, *, seed = None, options = None) -> tuple[dict[str, np.ndarray[float]]]:
         obs, info = super().reset()
         self._current_value = self.cash_account.current_balance(qrl.AccountType.CASH)
         return obs, info
@@ -86,21 +86,21 @@ class StatArbEnv(qrl.BaseEnv):
             columns=self.market_observation_columns + ["market_id", "symbol_id"]
         ).pivot(index="market_id", columns="symbol_id", values=self.market_observation_columns)
         return {
-            "market": market_data_pivot.drop("market_id").to_numpy(),
-            "portfolio": self.portfolio.summarise_positions(self.market),
+            "market": market_data_pivot.drop("market_id").to_numpy().astype(np.float32),
+            "portfolio": self.portfolio.summarise_positions(self.market).astype(np.float32),
             "cash_account": np.array(
                 [
                     self.cash_account.current_balance(qrl.AccountType.CASH),
                     self.cash_account.current_balance(qrl.AccountType.MARGIN),
                 ]
-            ),
+            ).astype(np.float32),
             "predictive_model": np.array(
                 [
                     self.predictive_model.predict(self.market, symbol_id)
                     for symbol_id in self.predictive_model.symbols
                 ] 
                 + [self.predictive_model.performance]
-            )
+            ).astype(np.float32)
         }
 
     @property
